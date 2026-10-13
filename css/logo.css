@@ -52,19 +52,13 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, a:focus-visi
   margin-bottom: 27px;
 }
 .brand-mark {
-  display: grid;
+  display: block;
   flex: 0 0 58px;
   width: 58px;
   height: 58px;
-  place-items: center;
-  border-radius: 18px;
-  color: #fff;
-  background: var(--green);
-  font-size: 37px;
-  font-weight: 700;
-  line-height: 1;
-  transform: rotate(-18deg);
+  filter: drop-shadow(0 8px 14px rgba(74, 26, 140, .25));
 }
+.brand-mark img { display: block; width: 100%; height: 100%; }
 .hero-copy { min-width: 0; }
 .eyebrow, .panel-kicker {
   margin: 0 0 7px;
@@ -467,7 +461,7 @@ kbd {
 @media (max-width: 600px) {
   .app-shell { width: calc(100% - 24px); padding-top: 22px; }
   .hero { align-items: flex-start; gap: 12px; margin-bottom: 20px; }
-  .brand-mark { flex-basis: 44px; width: 44px; height: 44px; border-radius: 14px; font-size: 29px; }
+  .brand-mark { flex-basis: 44px; width: 44px; height: 44px; }
   .runtime-badge { display: none; }
   .intro { font-size: 12px; }
   .controls, .controls-group { gap: 8px; }

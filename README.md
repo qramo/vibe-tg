@@ -46,7 +46,7 @@ python3 -m http.server 8000
 ├── LICENSE
 ├── .nojekyll
 ├── css/logo.css
-├── img/                  # favicon、GitHubアイコン
+├── img/                  # ロゴ（sea-turtle.svg）、favicon、GitHubアイコン
 ├── js/
 │   ├── logo.js           # 上流LOGOインタプリタ（括弧対応などを追加）
 │   ├── logo.i18n.js      # 上流のコマンド定義とサンプル

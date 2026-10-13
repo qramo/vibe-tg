@@ -7,7 +7,7 @@
 - 上流著作権表示：`Copyright (c) 2025 Oliver`
 - ライセンス：MIT License（全文は同梱の `LICENSE`）
 
-上流由来の主なファイルは `js/logo.js`、`js/logo.i18n.js`、`test/` と画像資産です。上流の著作権表示およびMITライセンス通知を同梱し、上流由来コードの複製・配布でも維持してください。`css/logo.css` は元の表示を土台に、このスターター用にレスポンシブ調整を加えています。
+上流由来の主なファイルは `js/logo.js`、`js/logo.i18n.js`、`test/` と `img/GitHub-Mark-Light-32px.png` です。上流の著作権表示およびMITライセンス通知を同梱し、上流由来コードの複製・配布でも維持してください。`css/logo.css` は元の表示を土台に、このスターター用にレスポンシブ調整を加えています。
 
 `index.html`、`js/site.js`、このREADMEおよび本ファイルは、GitHub Pagesで使いやすくするために追加したスターター用ファイルです。
 
@@ -25,6 +25,10 @@
 - 実行のたびに（「画面を消去」でも）ペンを初期状態（下ろす・黒・太さ1・既定の文字サイズ・タートル表示）に戻すようにした。前回の実行の `PENUP` などが持ち越されないようにするため。
 
 `test/parsertests.js` には、これらの境界ケースのテストを追加しました。また、描画イベントの件数も比べ、エラーで実行を止めるようにテスト補助を変えています。`test/turtletests.js`、`test/blocktests.js`、`test/penchecktests.js` は、このプロジェクトで追加したテストです。
+
+## ロゴとファビコン
+
+`img/sea-turtle.svg`（ヘッダーのロゴとファビコン）と、そこから作った `img/favicon.ico`（16・32・48px）は、このプロジェクトのオリジナルです。[qramo/vibe-tg#1](https://github.com/qramo/vibe-tg/pull/1) で提案されたウミガメのアイコンを元に、配置・背景・形を調整しました。上流の favicon は置き換えています。
 
 ## Scratch Blocks
 
