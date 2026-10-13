@@ -21,7 +21,7 @@ vibe-tg : Vibe Turtle Graphics の実装メモです。次に作業する人（�
 | `index.html` | 画面構成。タブ、各パネル、Chat 設定ダイアログ |
 | `css/logo.css` | 全スタイル。上部の操作列と作業領域は同じ2列グリッド（左＝エディタ可変、右＝実行画面 `--stage-width` 固定）。描画枠と編集欄の高さは `--work-height`。1100px / 850px / 600px でレスポンシブ切り替え |
 | `js/logo.js` | 上流由来の LOGO インタプリタ（Tokenizer / Parser / Turtle / Interpreter）。グローバルに `interpreter` を作る |
-| `js/logo.i18n.js` | 上流由来。英語・スペイン語のコマンド別名、エラー文、サンプル |
+| `js/logo.i18n.js` | 上流由来の英語・スペイン語に、日本語を追加。コマンド別名、エラー文、サンプル |
 | `js/site.js` | 日本語 UI の補助。初期コード、⌘/Ctrl+Enter（コードタブ） |
 | `js/blocks.js` | ES module。ブロック定義、ブロック⇔テキスト変換、3タブの切り替え、Chat 向け API |
 | `js/chat.js` | ES module。Chat UI、設定、WebLLM の読み込みと生成、検証・再試行 |
@@ -74,18 +74,24 @@ module からは、classic script のトップレベル宣言（`interpreter`、
 - 定義の外の `stop` は、プログラム全体を止める（以前は「END がない」という見当違いのエラー）。ブロックの表示は「止める」。
 - 定義を呼んだ時点のブロックスタックの深さを記録し、`end` でそこまで戻す。以前は `if … [stop]` で抜けると、呼び出し側の `repeat` が1回で終わっていた。
 - 定義の外の単独の `end` は無視する（以前は TypeError）。
+- 日本語のコマンドに対応した（`i18n.Japanese`）。
+  - `Tokenizer.isLetter` がひらがな・カタカナ（長音符を含む）・漢字も文字として扱う。そのため、定義名・変数名にも日本語が使える。
+  - `tokenize()` の最初に NFKC 正規化をかけ、日本語入力で混ざる全角の数字・`［］`・`：`・全角スペースを半角に揃える。
+  - 別名の最後の要素が、ブロックや AI のコードから生成するときの表記になる（日本語はひらがな）。
+  - 日本語サンプル8つは英語版と同じ描画イベント列になることを確認済み。
+- 「画面を消去」（`Interpreter.clear()`）は絵とペンの状態だけを戻し、エディタは消さない。エディタを消すのは新しい `clearCode()`（「コードを消去」ボタン。中身があれば `site.js` で確認ダイアログを出す）。上流の `clear()` はエディタも消していた。言語切り替え時の `clear()` → `setEditor(保存済みの最後の実行)` の流れはそのまま動く。
 - 「実行」と「画面を消去」のたびに、ペンを初期状態に戻す（`Turtle.resetPen()`：ペンを下ろす、色は黒、太さ1、文字の大きさ既定、タートル表示）。以前は前回の `pu` や色が持ち越され、`pu` で終わるプログラムの次の実行で線が描かれなかった。描いた絵と背景色は残る。
 
 ## テスト
 
-ページを開くと全テストが自動で実行され、結果が console に `TEST PASSED/FAILED` で出ます（2026-10-13 時点で計120件、全件合格）。各 `run…Tests` は全件合格なら `true` を返します。
+ページを開くと全テストが自動で実行され、結果が console に `TEST PASSED/FAILED` で出ます（2026-10-13 時点で計133件、全件合格）。各 `run…Tests` は全件合格なら `true` を返します。
 
 | 種類 | 件数 | 手動で実行するとき（console） |
 |---|---|---|
-| Tokenizer | 26 | `runTokenizerTests(i18n)` |
-| Parser | 27 | `runParserTests(Tokenizer, Parser, i18n)` |
+| Tokenizer | 29 | `runTokenizerTests(i18n)` |
+| Parser | 29 | `runParserTests(Tokenizer, Parser, i18n)` |
 | Turtle | 9 | `runTurtleTests(Turtle)` |
-| ブロック変換 | 41 | `(await import('./test/blocktests.js')).runBlockTests(await import('./js/blocks.js'))` |
+| ブロック変換 | 49 | `(await import('./test/blocktests.js')).runBlockTests(await import('./js/blocks.js'))` |
 | ペン判定 | 17 | `(await import('./test/penchecktests.js')).runPenCheckTests(await import('./js/pencheck.js'))` |
 
 - Parser テストの補助は、期待したイベントと**件数まで一致**することを確かめます。また、アプリと同じくエラーが出たら実行を止めます。

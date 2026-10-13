@@ -625,6 +625,51 @@ function runTokenizerTests(i18n) {
             ]
         )
     );
+    tests.push(
+        assertTokens(
+            'Japanese commands with full-width digits and spaces',
+            "Japanese",
+            "まえ　１００　みぎ　９０",
+            [
+                new Token(0,    "まえ",     Tokenizer.tokenTypes.PRIMITIVE, Tokenizer.primitives.FORWARD),
+                new Token(3,    "100",      Tokenizer.tokenTypes.NUMBER,    Tokenizer.primitives.NONE),
+                new Token(7,    "みぎ",     Tokenizer.tokenTypes.PRIMITIVE, Tokenizer.primitives.RIGHT),
+                new Token(10,   "90",       Tokenizer.tokenTypes.NUMBER,    Tokenizer.primitives.NONE)
+            ]
+        )
+    );
+    tests.push(
+        assertTokens(
+            'Japanese command directly followed by a number',
+            "Japanese",
+            "まえ100",
+            [
+                new Token(0,    "まえ",     Tokenizer.tokenTypes.PRIMITIVE, Tokenizer.primitives.FORWARD),
+                new Token(2,    "100",      Tokenizer.tokenTypes.NUMBER,    Tokenizer.primitives.NONE)
+            ]
+        )
+    );
+    tests.push(
+        assertTokens(
+            'Japanese procedure and parameter names, with kanji aliases',
+            "Japanese",
+            "つくる しかく ：へん\n繰り返す ４ ［前 ：へん 右 ９０］",
+            [
+                new Token(0,    "つくる",       Tokenizer.tokenTypes.PRIMITIVE,         Tokenizer.primitives.TO),
+                new Token(4,    "しかく",       Tokenizer.tokenTypes.PROCEDURE_NAME,    Tokenizer.primitives.NONE),
+                new Token(8,    ":へん",        Tokenizer.tokenTypes.VARIABLE,          Tokenizer.primitives.NONE),
+                new Token(11,   Tokenizer.LF,   Tokenizer.tokenTypes.DELIMITER,         Tokenizer.primitives.NONE),
+                new Token(12,   "繰り返す",     Tokenizer.tokenTypes.PRIMITIVE,         Tokenizer.primitives.REPEAT),
+                new Token(17,   "4",            Tokenizer.tokenTypes.NUMBER,            Tokenizer.primitives.NONE),
+                new Token(19,   "[",            Tokenizer.tokenTypes.DELIMITER,         Tokenizer.primitives.NONE),
+                new Token(20,   "前",           Tokenizer.tokenTypes.PRIMITIVE,         Tokenizer.primitives.FORWARD),
+                new Token(22,   ":へん",        Tokenizer.tokenTypes.VARIABLE,          Tokenizer.primitives.NONE),
+                new Token(26,   "右",           Tokenizer.tokenTypes.PRIMITIVE,         Tokenizer.primitives.RIGHT),
+                new Token(28,   "90",           Tokenizer.tokenTypes.NUMBER,            Tokenizer.primitives.NONE),
+                new Token(30,   "]",            Tokenizer.tokenTypes.DELIMITER,         Tokenizer.primitives.NONE)
+            ]
+        )
+    );
 
     return tests.every(test => test);
 }

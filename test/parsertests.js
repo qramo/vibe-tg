@@ -432,6 +432,37 @@ function runParserTests(Tokenizer, Parser, i18n) {
     );
     tests.push(
         assertScript(
+            "Japanese square with REPEAT",
+            "Japanese",
+            "くりかえす 2 [まえ 60 みぎ 90]",
+            [
+                [Tokenizer.primitives.FORWARD, 60],
+                [Tokenizer.primitives.RIGHT, 90],
+                [Tokenizer.primitives.FORWARD, 60],
+                [Tokenizer.primitives.RIGHT, 90]
+            ]
+        )
+    );
+    tests.push(
+        assertScript(
+            "Japanese procedure with a Japanese parameter and full-width digits",
+            "Japanese",
+            lines([
+                "つくる しかく ：へん",
+                "  くりかえす ２ ［まえ ：へん ひだり ９０］",
+                "おわり",
+                "しかく ３０"
+            ]),
+            [
+                [Tokenizer.primitives.FORWARD, 30],
+                [Tokenizer.primitives.LEFT, 90],
+                [Tokenizer.primitives.FORWARD, 30],
+                [Tokenizer.primitives.LEFT, 90]
+            ]
+        )
+    );
+    tests.push(
+        assertScript(
             "Trigger error CODEBLOCK_EXPECTED_CLOSING_BRACKET when a code block is never closed",
             "English",
             "repeat 2 [fd 10",

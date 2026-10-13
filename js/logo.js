@@ -121,7 +121,8 @@ class Tokenizer {
         return c === this.NUL;
     }
     isLetter(c) {
-        return "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz".indexOf(c) !== -1;
+        // Hiragana, katakana (with the long vowel mark) and kanji count as letters so Japanese commands and names work
+        return typeof c === "string" && c.length === 1 && /[A-Za-z\u3041-\u3096\u309D-\u309F\u30A1-\u30FA\u30FC-\u30FF\u3005\u3400-\u4DBF\u4E00-\u9FFF]/.test(c);
     }
     isNewLine(c) {
         return Tokenizer.LF.indexOf(c) !== -1;
@@ -152,7 +153,8 @@ class Tokenizer {
         this.currentCharacter = this.script[this.currentIndex];
     }
     tokenize(script = "") {
-        this.initialize(script);
+        // NFKC turns full-width digits, brackets, colons and spaces typed with a Japanese IME into their ASCII forms
+        this.initialize(script.normalize("NFKC"));
 
         do {
             this.getNextCharacter();
@@ -1190,10 +1192,13 @@ class Interpreter {
         });
     }
     clear() {
-        this.setEditor("");
+        // Only the drawing is cleared; the program stays (clearCode() empties the editor)
         this.setStatusBar("");
         this.turtle.resetPen();
         this.turtle.execute_clearscreen();
+    }
+    clearCode() {
+        this.setEditor("");
     }
     getLatestScriptRun() {  
         return localStorage.getItem(this.storageKey) ?? "";

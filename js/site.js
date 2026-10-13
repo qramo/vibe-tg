@@ -15,10 +15,17 @@
     const spanish = languageSelect.querySelector('option[value="Spanish"]');
     if (english) english.textContent = 'English（英語）';
     if (spanish) spanish.textContent = 'Español（スペイン語）';
+    const japanese = languageSelect.querySelector('option[value="Japanese"]');
+    if (japanese) japanese.textContent = '日本語';
   }
 
   localizeChrome();
   languageSelect.addEventListener('change', localizeChrome);
+
+  document.getElementById('logo-clear-code').addEventListener('click', () => {
+    if (editor.value.trim() && !window.confirm('プログラムを消去しますか？（描いた絵は残ります）')) return;
+    interpreter.clearCode();
+  });
 
   if (!editor.value.trim()) editor.value = starterCode;
 

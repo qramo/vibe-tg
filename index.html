@@ -28,16 +28,18 @@
         <select id="logo-languages" class="language-select" aria-label="LOGOコマンドの言語">
           <option value="English" selected>English（英語）</option>
           <option value="Spanish">Español（スペイン語）</option>
+          <option value="Japanese">日本語</option>
         </select>
         <label class="sr-only" for="logo-examples">サンプルを選択</label>
         <select id="logo-examples" class="examples-select" aria-label="サンプルを選択">
           <option selected disabled>サンプルを選択</option>
         </select>
+        <button type="button" id="logo-clear-code" title="エディタのプログラムを消します（絵は残ります）">コードを消去</button>
       </div>
       <div class="controls-group controls-stage">
         <button type="button" id="logo-run" onclick="interpreter.run()">実行 ▶</button>
         <button type="button" id="logo-stop" onclick="interpreter.stop()">停止 ■</button>
-        <button type="button" id="logo-clear" onclick="interpreter.clear()">画面を消去</button>
+        <button type="button" id="logo-clear" onclick="interpreter.clear()" title="描いた絵を消します（プログラムは残ります）">画面を消去</button>
       </div>
     </section>
 
@@ -86,7 +88,7 @@
         <div id="text-view" class="editor-view" role="tabpanel" aria-labelledby="tab-text">
           <textarea id="logo-editor" spellcheck="false" autocapitalize="off" autocomplete="off" aria-label="LOGOプログラム" aria-describedby="editor-help"></textarea>
         </div>
-        <p class="panel-help"><span id="editor-help">コマンドは英語またはスペイン語です。例を選ぶとコードを読み込めます。</span> <span class="key-hint"><kbd>⌘</kbd>/<kbd>Ctrl</kbd> + <kbd>Enter</kbd> で実行</span></p>
+        <p class="panel-help"><span id="editor-help">コマンドは言語欄で選んだ英語・スペイン語・日本語で書きます。例を選ぶとコードを読み込めます。</span> <span class="key-hint"><kbd>⌘</kbd>/<kbd>Ctrl</kbd> + <kbd>Enter</kbd> で実行</span></p>
       </section>
 
       <section class="panel graphics-panel" aria-labelledby="graphics-title">

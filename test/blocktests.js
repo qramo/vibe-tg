@@ -83,7 +83,7 @@ export function runBlockTests({ checkProgram, roundTripProgram }) {
     tests.push(assertRoundTrip("English", { name: "color number out of range", code: ["setpc 16 fd 10 setbg 20"] }));
     tests.push(assertRoundTrip("English", { name: "STOP outside a procedure", code: ["repeat 3 [fd 10 stop]"] }));
     tests.push(assertRoundTrip("English", { name: "nested arithmetic", code: ["fd (10 + 20) * 2 - 100 / (2 + 3)"] }));
-    ["English", "Spanish"].forEach(language => {
+    ["English", "Spanish", "Japanese"].forEach(language => {
         i18n[language].examples.forEach(example => tests.push(assertRoundTrip(language, example)));
     });
 

@@ -98,7 +98,7 @@ h1 { margin: 0; font-size: clamp(26px, 4vw, 36px); letter-spacing: -.04em; line-
 }
 .controls { margin-bottom: 14px; }
 .controls-group { display: grid; gap: 10px; min-width: 0; }
-.controls-editor { grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); }
+.controls-editor { grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) minmax(0, .9fr); }
 .controls-stage { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .controls button, .controls select {
   width: 100%;

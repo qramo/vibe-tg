@@ -21,7 +21,7 @@ const VIEWS = {
 const HELP_TEXT = {
   chat: '描きたい絵を日本語で伝えると、ブラウザー内のAIがLOGOのコードを書いて実行します。モデルや指示文は「設定」で変えられます。',
   blocks: '左のパレットからブロックをドラッグし、「旗が押されたとき」の下につなげます。定義ブロックで自分の命令も作れます。',
-  text: 'コマンドは英語またはスペイン語です。例を選ぶとコードを読み込めます。'
+  text: 'コマンドは言語欄で選んだ英語・スペイン語・日本語で書きます。例を選ぶとコードを読み込めます。'
 };
 
 const COLOURS = [
@@ -116,6 +116,12 @@ function primitiveName(code) {
   return Object.keys(Tokenizer.primitives).find(key => Tokenizer.primitives[key] === code);
 }
 
+// Names follow the tokenizer's idea of a letter, which includes Japanese characters.
+const nameTokenizer = new Tokenizer();
+function isNameCharacter(char) {
+  return nameTokenizer.isLetter(char);
+}
+
 function isPrimitiveAlias(word) {
   const lower = word.toLowerCase();
   return interpreter.locale.primitiveAliases.some(item => item.aliases.includes(lower));
@@ -208,13 +214,14 @@ function defineBlocks() {
         ],
         extensions: ['colours_more', 'shape_hat']
       });
-      this.setTooltip('名前と引数は半角英字で入力します（引数は空白区切り）。');
+      this.setTooltip('名前と引数は英字か、ひらがな・カタカナ・漢字で入力します（数字や記号は使えません。引数は空白区切り）。');
       this.getField('NAME').setValidator(value => {
-        const name = value.replace(/[^A-Za-z]/g, '');
+        const name = [...value.normalize('NFKC')].filter(isNameCharacter).join('');
         return name && !isPrimitiveAlias(name) ? name : null;
       });
       this.getField('PARAMS').setValidator(value =>
-        value.replace(/[^A-Za-z\s]/g, ' ').trim().split(/\s+/).filter(Boolean).join(' '));
+        [...value.normalize('NFKC')].map(char => (isNameCharacter(char) ? char : ' ')).join('')
+          .trim().split(/\s+/).filter(Boolean).join(' '));
     }
   };
 
