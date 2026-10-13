@@ -1,12 +1,17 @@
-// AI Chat: an in-browser LLM (WebLLM) writes LOGO programs, which are checked, put into the editor and run.
+// AI Chat: an LLM writes LOGO programs, which are checked, put into the editor and run.
+// The model runs in the browser (WebLLM) or behind an external API (js/providers.js).
 import { checkProgram, applyProgram, selectView, translateProgram, currentLanguage } from './blocks.js';
 import { WEBLLM_URL } from './webllm.js';
 import { findPenUpProblem } from './pencheck.js';
 import { renderSnapshot } from './snapshot.js';
+import { PROVIDERS, ProviderError, createClient, describeError, toOpenAiMessages, toAnthropicContent, readEvents, apiRoot } from './providers.js';
 import { runSnapshotTests } from '../test/snapshottests.js';
 import { runPenCheckTests } from '../test/penchecktests.js';
+import { runProviderTests } from '../test/providertests.js';
 
 const SETTINGS_KEY = 'vibe-tg-chat-settings';
+// API keys the person chose to keep, separate from the settings so the settings never carry a key.
+const API_KEYS_KEY = 'vibe-tg-api-keys';
 
 // VRAM figures come from WebLLM 0.2.85's prebuilt model list.
 // recommendedFor marks the pick per device memory, chosen by size and by how new the model is.
@@ -140,6 +145,16 @@ const DEFAULT_SETTINGS = {
   useVision: false,
   visionPrompt: DEFAULT_VISION_PROMPT,
   systemPrompt: DEFAULT_SYSTEM_PROMPT,
+  // 'browser' runs WebLLM; any key of PROVIDERS calls that external API instead.
+  provider: 'browser',
+  // External models may think before answering, and that counts toward maxTokens.
+  remote: Object.fromEntries(Object.entries(PROVIDERS).map(([id, provider]) => [id, {
+    baseUrl: '',
+    model: provider.defaultModel ?? '',
+    maxTokens: provider.defaultMaxTokens,
+    // Local only: thinking models such as Qwen3 otherwise spend the whole output limit thinking.
+    noThinking: id === 'local'
+  }])),
   // Where WebLLM keeps downloaded models: the Cache API first, OPFS after a Cache API failure.
   cacheBackend: 'cache'
 };
@@ -152,6 +167,7 @@ const SUGGESTIONS = ['家を描いて', '花を描いて', '雪だるまを描�
 // Every model in MODELS is configured with a 4096-token context in WebLLM 0.2.85.
 const CONTEXT_WINDOW = 4096;
 // Only the latest exchanges are sent: enough for "make the roof red", while older programs would anchor small models.
+// External providers set their own limits in js/providers.js.
 const MAX_HISTORY_EXCHANGES = 2;
 // Kept free beyond the output limit so a retry (the failed program plus the error message) still fits.
 const RETRY_MARGIN = 350;
@@ -185,6 +201,13 @@ let tokenScale = 1;
 let lastUsage = null;
 // The editor program at the moment a new conversation started; it is not shown to the model unless someone edits it.
 let programAtNewSession = null;
+// Keys typed in this tab, by provider. Only the ones the person chose to save are also in localStorage.
+const apiKeys = loadSavedKeys();
+let remoteClient = null;
+let remoteClientKey = '';
+let abortController = null;
+// Providers already told that the request leaves the computer, so the notice shows once per page load.
+const notifiedProviders = new Set();
 
 // ---------- Settings ----------
 
@@ -196,6 +219,8 @@ function loadSettings() {
     merged.systemPrompt ??= DEFAULT_SYSTEM_PROMPT;
     merged.visionPrompt ??= DEFAULT_VISION_PROMPT;
     if (!MODELS.some(model => model.id === merged.model)) merged.model = DEFAULT_SETTINGS.model;
+    if (merged.provider !== 'browser' && !PROVIDERS[merged.provider]) merged.provider = 'browser';
+    merged.remote = Object.fromEntries(Object.keys(PROVIDERS).map(id => [id, { ...DEFAULT_SETTINGS.remote[id], ...stored.remote?.[id] }]));
     return merged;
   } catch (_) {
     return { ...DEFAULT_SETTINGS };
@@ -210,6 +235,58 @@ function saveSettings() {
     visionPrompt: settings.visionPrompt === DEFAULT_VISION_PROMPT ? null : settings.visionPrompt
   };
   try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(stored)); } catch (_) { /* storage unavailable */ }
+}
+
+function loadSavedKeys() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(API_KEYS_KEY) ?? '{}');
+    return saved && typeof saved === 'object' ? saved : {};
+  } catch (_) {
+    return {};
+  }
+}
+
+function storeKey(id, key, remember) {
+  if (key) apiKeys[id] = key;
+  else delete apiKeys[id];
+  const saved = loadSavedKeys();
+  if (remember && key) saved[id] = key;
+  else delete saved[id];
+  try {
+    if (Object.keys(saved).length) localStorage.setItem(API_KEYS_KEY, JSON.stringify(saved));
+    else localStorage.removeItem(API_KEYS_KEY);
+  } catch (_) { /* the key then lasts for this tab only */ }
+}
+
+function isRemote() {
+  return settings.provider !== 'browser';
+}
+
+function remoteModel(id = settings.provider) {
+  return settings.remote[id].model || PROVIDERS[id].defaultModel || '';
+}
+
+function getRemoteClient() {
+  const { baseUrl, noThinking } = settings.remote[settings.provider];
+  const options = { baseUrl, noThinking, model: remoteModel(), apiKey: apiKeys[settings.provider] ?? '' };
+  const key = JSON.stringify([settings.provider, options]);
+  if (key !== remoteClientKey) {
+    remoteClient = createClient(settings.provider, options);
+    remoteClientKey = key;
+  }
+  return remoteClient;
+}
+
+function contextWindow() {
+  return isRemote() ? PROVIDERS[settings.provider].contextWindow : CONTEXT_WINDOW;
+}
+
+function historyLimit() {
+  return isRemote() ? PROVIDERS[settings.provider].historyExchanges : MAX_HISTORY_EXCHANGES;
+}
+
+function outputLimit() {
+  return isRemote() ? settings.remote[settings.provider].maxTokens : settings.maxTokens;
 }
 
 function modelInfo(id) {
@@ -292,9 +369,123 @@ async function deleteSelectedModel() {
   await markCachedModels();
 }
 
+// The external-provider fields of every provider while the dialog is open, so switching providers back and forth keeps what was typed.
+let draft = {};
+let dialogProvider = 'browser';
+
+function readRemoteFields() {
+  if (dialogProvider === 'browser') return;
+  draft[dialogProvider] = {
+    baseUrl: $('setting-base-url').value.trim(),
+    model: $('setting-remote-model').value.trim(),
+    apiKey: $('setting-api-key').value.trim(),
+    remember: $('setting-remember-key').checked,
+    noThinking: $('setting-no-thinking').checked,
+    maxTokens: Math.round(clampNumber($('setting-remote-max-tokens').value, 256, 32000, PROVIDERS[dialogProvider].defaultMaxTokens))
+  };
+}
+
+function fillModelChoices(ids) {
+  $('setting-remote-models').replaceChildren(...ids.map(id => {
+    const option = document.createElement('option');
+    option.value = id;
+    return option;
+  }));
+}
+
+function setTestResult(text, kind = '') {
+  const result = $('setting-test-result');
+  result.textContent = text;
+  result.className = `settings-test-result${kind ? ` is-${kind}` : ''}`;
+}
+
+function showProviderFields(id) {
+  dialogProvider = id;
+  const remote = id !== 'browser';
+  const provider = PROVIDERS[id];
+  $('settings-browser').hidden = remote;
+  $('settings-remote').hidden = !remote;
+  $('setting-max-tokens-row').hidden = remote;
+  $('setting-delete-vision').hidden = remote;
+  $('setting-grammar').disabled = remote;
+  $('setting-grammar-label').textContent = remote
+    ? 'LOGOの文法で出力を制約する（ブラウザー内のモデルだけ）'
+    : 'LOGOの文法で出力を制約する（実験的）';
+  $('setting-vision-label').textContent = remote
+    ? '描いた絵の画像を同じモデルに見せて、指摘があれば1回直す（画像を読めるモデルだけ。呼び出しが2〜3回増えます）'
+    : '描いた絵のスクリーンショットを画像モデルに見せて、指摘があれば1回直す（画像モデル Phi-3.5-vision も読み込みます。VRAM 約4GB、初回ダウンロード約2.8GB）';
+  $('setting-temperature').disabled = remote && !provider.sendsTemperature;
+  $('setting-temperature').title = $('setting-temperature').disabled ? 'このサービスのモデルは温度を指定できません' : '';
+  setTestResult('');
+  if (!remote) return;
+  const values = draft[id];
+  $('setting-base-url-row').hidden = id !== 'local';
+  $('setting-no-thinking-row').hidden = id !== 'local';
+  $('setting-no-thinking').checked = values.noThinking;
+  $('setting-base-url').value = values.baseUrl;
+  $('setting-base-url').placeholder = provider.defaultBaseUrl ?? '';
+  $('setting-api-key').value = values.apiKey;
+  $('setting-api-key').placeholder = provider.keyRequired ? '必須' : '空欄で可（サーバーが求めるときだけ）';
+  $('setting-remember-key').checked = values.remember;
+  $('setting-remote-max-tokens').value = values.maxTokens;
+  $('setting-remote-model').value = values.model;
+  $('setting-remote-model').placeholder = provider.modelPlaceholder;
+  fillModelChoices(provider.suggestedModels ?? []);
+  $('setting-remote-help').textContent = provider.help;
+}
+
+function dialogClient() {
+  readRemoteFields();
+  const values = draft[dialogProvider];
+  const provider = PROVIDERS[dialogProvider];
+  if (provider.keyRequired && !values.apiKey) throw new Error('API キーを入れてください。');
+  return createClient(dialogProvider, { ...values, model: values.model || provider.defaultModel || '' });
+}
+
+async function listRemoteModels() {
+  const id = dialogProvider;
+  setTestResult('モデルの一覧を取得しています…');
+  try {
+    const ids = await dialogClient().listModels();
+    if (id !== dialogProvider) return;
+    fillModelChoices(ids);
+    setTestResult(ids.length ? `${ids.length}件見つかりました。モデル欄をクリックすると選べます。` : 'モデルが見つかりませんでした。', ids.length ? 'ok' : 'error');
+  } catch (error) {
+    if (id === dialogProvider) setTestResult(describeError(error, id), 'error');
+  }
+}
+
+async function testConnection() {
+  const id = dialogProvider;
+  setTestResult('問い合わせています…');
+  try {
+    const client = dialogClient();
+    if (!draft[id].model && !PROVIDERS[id].defaultModel) throw new Error('モデル名を入れてください。');
+    const { text } = await client.chat({
+      messages: [{ role: 'user', content: 'Reply with the single word OK.' }],
+      maxTokens: 1024,
+      temperature: 0,
+      signal: AbortSignal.timeout(60000)
+    });
+    if (id !== dialogProvider) return;
+    const reply = visibleText(text).replace(/\s+/g, ' ').slice(0, 40);
+    setTestResult(reply ? `つながりました（返事：${reply}）` : 'つながりました（返事は空でした。最大出力トークン数を増やすと直ることがあります）', 'ok');
+  } catch (error) {
+    if (id === dialogProvider) setTestResult(describeError(error, id), 'error');
+  }
+}
+
 function openSettings() {
   renderModelList();
   markCachedModels();
+  const saved = loadSavedKeys();
+  draft = Object.fromEntries(Object.keys(PROVIDERS).map(id => [id, {
+    ...settings.remote[id],
+    apiKey: apiKeys[id] ?? '',
+    remember: Boolean(saved[id])
+  }]));
+  $('setting-provider').value = settings.provider;
+  showProviderFields(settings.provider);
   $('setting-temperature').value = settings.temperature;
   $('setting-retries').value = settings.maxRetries;
   $('setting-max-tokens').value = settings.maxTokens;
@@ -314,10 +505,23 @@ function setupSettings() {
   $('setting-delete-vision').addEventListener('click', deleteVisionModel);
   $('setting-reset-prompt').addEventListener('click', () => { $('setting-system-prompt').value = DEFAULT_SYSTEM_PROMPT; });
   $('setting-reset-vision-prompt').addEventListener('click', () => { $('setting-vision-prompt').value = DEFAULT_VISION_PROMPT; });
+  $('setting-provider').addEventListener('change', () => {
+    readRemoteFields();
+    showProviderFields($('setting-provider').value);
+  });
+  $('setting-list-models').addEventListener('click', listRemoteModels);
+  $('setting-test').addEventListener('click', testConnection);
   $('chat-settings-form').addEventListener('submit', () => {
+    readRemoteFields();
+    const before = `${settings.provider} ${isRemote() ? remoteModel() : settings.model}`;
     // Keep settings the dialog does not show (such as cacheBackend).
     settings = {
       ...settings,
+      provider: $('setting-provider').value,
+      remote: Object.fromEntries(Object.keys(PROVIDERS).map(id => {
+        const { baseUrl, model, maxTokens, noThinking } = draft[id];
+        return [id, { baseUrl, model, maxTokens, noThinking }];
+      })),
       model: selectedModelId(),
       temperature: clampNumber($('setting-temperature').value, 0, 1.5, DEFAULT_SETTINGS.temperature),
       maxRetries: Math.round(clampNumber($('setting-retries').value, 0, 5, DEFAULT_SETTINGS.maxRetries)),
@@ -329,31 +533,58 @@ function setupSettings() {
       systemPrompt: $('setting-system-prompt').value.trim() || DEFAULT_SYSTEM_PROMPT,
       visionPrompt: $('setting-vision-prompt').value.trim() || DEFAULT_VISION_PROMPT
     };
+    Object.keys(PROVIDERS).forEach(id => storeKey(id, draft[id].apiKey, draft[id].remember));
     saveSettings();
+    if (`${settings.provider} ${isRemote() ? remoteModel() : settings.model}` !== before) {
+      // The token estimate was calibrated to the previous model's tokenizer.
+      tokenScale = 1;
+      lastUsage = null;
+      if (isRemote()) addNote(`接続先を ${PROVIDERS[settings.provider].shortLabel}（${remoteModel() || 'モデル未設定'}）に切り替えました。`);
+    }
     updateUi();
   });
 }
 
 // ---------- UI ----------
 
+/** What is missing before an external provider can be called, or '' when nothing is. */
+function remoteMissing() {
+  if (!remoteModel()) return 'モデル名';
+  if (PROVIDERS[settings.provider].keyRequired && !apiKeys[settings.provider]) return 'API キー';
+  return '';
+}
+
 function isReady() {
+  if (isRemote()) return !remoteMissing();
   return Boolean(engine) && loadedModel === settings.model && (!settings.useVision || visionLoaded);
 }
 
+/** Whether a finished drawing is shown to a model: the browser needs its image model loaded, external models get it directly. */
+function visionReady() {
+  return settings.useVision && (isRemote() || visionLoaded);
+}
+
 function updateUi() {
-  const info = modelInfo(settings.model);
   const ready = isReady();
-  const label = settings.useVision ? `${info.label}＋画像モデル` : info.label;
-  const vram = Math.round((info.vram + (settings.useVision ? VISION_MODEL.vram : 0)) * 10) / 10;
-  if (loading) modelStatus.textContent = `${label} を読み込み中…`;
-  else if (ready) modelStatus.textContent = `${label}：準備完了`;
-  else modelStatus.textContent = `${label}：未読み込み（VRAM 約${vram}GB）`;
-  loadButton.hidden = Boolean(ready);
+  if (isRemote()) {
+    const missing = remoteMissing();
+    const label = `${PROVIDERS[settings.provider].shortLabel}・${remoteModel() || 'モデル未設定'}${settings.useVision ? '（画像で見直し）' : ''}`;
+    modelStatus.textContent = missing ? `${label}：⚙設定で${missing}を入れてください` : `${label}：準備完了`;
+  } else {
+    const info = modelInfo(settings.model);
+    const label = settings.useVision ? `${info.label}＋画像モデル` : info.label;
+    const vram = Math.round((info.vram + (settings.useVision ? VISION_MODEL.vram : 0)) * 10) / 10;
+    if (loading) modelStatus.textContent = `${label} を読み込み中…`;
+    else if (ready) modelStatus.textContent = `${label}：準備完了`;
+    else modelStatus.textContent = `${label}：未読み込み（VRAM 約${vram}GB）`;
+  }
+  loadButton.hidden = Boolean(ready) || isRemote();
   loadButton.disabled = loading || generating || !navigator.gpu;
   loadButton.textContent = loadedModel ? 'このモデルに切り替える' : 'モデルを読み込む';
   input.disabled = !ready || loading;
   sendButton.disabled = !ready || loading || (!generating && !input.value.trim());
   sendButton.textContent = generating ? '中止' : '送信';
+  sendButton.title = generating ? 'Esc キーでも中止できます' : '';
   sendButton.classList.toggle('is-stop', generating);
   $('chat-new').disabled = generating;
   updateGauge();
@@ -388,20 +619,22 @@ function updateGauge() {
   const system = estimate([{ role: 'system', content: settings.systemPrompt }]);
   const past = estimate(historyMessages(history));
   const user = estimate([{ role: 'user', content: buildUserMessage(pending) }]);
-  const output = settings.maxTokens;
+  const output = outputLimit();
   const total = system + past + user + output;
-  const scale = 100 / Math.max(CONTEXT_WINDOW, total);
+  const limit = contextWindow();
+  const scale = 100 / Math.max(limit, total);
   const bar = $('chat-gauge-bar');
   [['system', system], ['history', past], ['program', user], ['output', output]].forEach(([name, value]) => {
     bar.querySelector(`.seg-${name}`).style.width = `${value * scale}%`;
   });
-  bar.setAttribute('aria-valuenow', String(Math.min(total, CONTEXT_WINDOW)));
-  const over = total + RETRY_MARGIN > CONTEXT_WINDOW;
+  bar.setAttribute('aria-valuemax', String(limit));
+  bar.setAttribute('aria-valuenow', String(Math.min(total, limit)));
+  const over = total + RETRY_MARGIN > limit;
   $('chat-gauge').classList.toggle('is-over', over);
   $('chat-gauge-text').textContent =
-    `文脈 約${formatNumber(total)} / ${formatNumber(CONTEXT_WINDOW)}（履歴 ${history.length}件）${over ? '・次の送信で古い履歴を外します' : ''}`;
+    `文脈 約${formatNumber(total)} / ${formatNumber(limit)}（履歴 ${history.length}件）${over ? '・次の送信で古い履歴を外します' : ''}`;
   const actual = lastUsage
-    ? `\n前回の実測：入力 ${formatNumber(lastUsage.prompt_tokens)} ＋ 出力 ${formatNumber(lastUsage.completion_tokens)} トークン`
+    ? `\n前回の実測：入力 ${formatNumber(lastUsage.input)} ＋ 出力 ${formatNumber(lastUsage.output)} トークン`
     : '';
   $('chat-gauge').title =
     `指示文 約${formatNumber(system)}・履歴 約${formatNumber(past)}・依頼と今のプログラム 約${formatNumber(user)}・出力用の枠 ${formatNumber(output)}${actual}`;
@@ -426,9 +659,9 @@ function buildMessages(request, items = history) {
 
 /** Drops the oldest exchanges until the request, the output limit and a retry fit in the context window. */
 function fitHistory(request) {
-  while (history.length > MAX_HISTORY_EXCHANGES) history.shift();
+  while (history.length > historyLimit()) history.shift();
   let dropped = 0;
-  while (history.length && estimate(buildMessages(request)) + settings.maxTokens + RETRY_MARGIN > CONTEXT_WINDOW) {
+  while (history.length && estimate(buildMessages(request)) + outputLimit() + RETRY_MARGIN > contextWindow()) {
     history.shift();
     dropped++;
   }
@@ -498,14 +731,16 @@ function showSuggestions() {
     });
     row.append(button);
   });
-  addNote('描きたいものを伝えてください。初回はモデルのダウンロード（数GB）に時間がかかります。');
+  addNote(isRemote()
+    ? '描きたいものを伝えてください。'
+    : '描きたいものを伝えてください。初回はモデルのダウンロード（数GB）に時間がかかります。');
   log.append(row);
 }
 
 // ---------- Model ----------
 
 async function loadModel() {
-  if (!navigator.gpu) return;
+  if (!navigator.gpu || isRemote()) return;
   loading = true;
   progress.hidden = false;
   progressBar.value = 0;
@@ -576,30 +811,55 @@ function visibleText(text) {
   return text.replace(/<think>[\s\S]*?<\/think>/g, '').replace(/<think>[\s\S]*$/, '').trim();
 }
 
-async function generate(messages, bubble, attempt) {
-  const isQwen = /^Qwen3/.test(loadedModel);
+/**
+ * One call to the model, in the browser or through the external provider. Image parts in messages go to the browser's
+ * image model when useVisionModel is set. onText receives the reply so far while it streams. Returns { text, usage }.
+ */
+async function complete({ messages, maxTokens, temperature, onText, useVisionModel = false, grammar = false }) {
+  if (isRemote()) {
+    abortController = new AbortController();
+    return getRemoteClient().chat({ messages, maxTokens, temperature, onText, signal: abortController.signal });
+  }
+  const model = useVisionModel ? VISION_MODEL.id : loadedModel;
   const request = {
-    // Required once two models are loaded; it names the code model.
-    model: loadedModel,
-    messages,
-    stream: true,
-    // At a low temperature a retry tends to reproduce the same broken program, so loosen it a little each time.
-    temperature: Math.min(1, settings.temperature + attempt * 0.3),
-    max_tokens: settings.maxTokens,
-    stream_options: { include_usage: true },
-    ...(isQwen ? { extra_body: { enable_thinking: false } } : {}),
-    ...(settings.grammar ? { response_format: { type: 'grammar', grammar: LOGO_GRAMMAR } } : {})
+    // Required once two models are loaded.
+    model,
+    messages: toOpenAiMessages(messages),
+    temperature,
+    max_tokens: maxTokens,
+    ...(/^Qwen3/.test(model) ? { extra_body: { enable_thinking: false } } : {}),
+    ...(grammar ? { response_format: { type: 'grammar', grammar: LOGO_GRAMMAR } } : {})
   };
+  if (!onText) {
+    const reply = await engine.chat.completions.create(request);
+    return { text: reply.choices[0]?.message?.content ?? '', usage: null };
+  }
   let text = '';
-  const chunks = await engine.chat.completions.create(request);
+  let usage = null;
+  const chunks = await engine.chat.completions.create({ ...request, stream: true, stream_options: { include_usage: true } });
   for await (const chunk of chunks) {
     text += chunk.choices[0]?.delta?.content ?? '';
-    bubble.textContent = visibleText(text) || '…';
-    scrollLog();
-    if (chunk.usage) {
-      lastUsage = chunk.usage;
-      tokenScale = chunk.usage.prompt_tokens / estimateMessages(messages);
+    onText(text);
+    if (chunk.usage) usage = { input: chunk.usage.prompt_tokens, output: chunk.usage.completion_tokens };
+  }
+  return { text, usage };
+}
+
+async function generate(messages, bubble, attempt) {
+  const { text, usage } = await complete({
+    messages,
+    maxTokens: outputLimit(),
+    // At a low temperature a retry tends to reproduce the same broken program, so loosen it a little each time.
+    temperature: Math.min(1, settings.temperature + attempt * 0.3),
+    grammar: settings.grammar && !isRemote(),
+    onText: sofar => {
+      bubble.textContent = visibleText(sofar) || '…';
+      scrollLog();
     }
+  });
+  if (usage) {
+    lastUsage = usage;
+    tokenScale = usage.input / estimateMessages(messages);
   }
   return visibleText(text);
 }
@@ -691,14 +951,23 @@ function penProblemFeedback(problem) {
 
 // ---------- Vision review ----------
 
+function viewerName() {
+  return isRemote() ? 'AI' : '画像モデル';
+}
+
+// Small browser models answer these in one line; external models may think first, so they get the usual output limit.
+function shortReplyLimit() {
+  return isRemote() ? outputLimit() : 120;
+}
+
 function addSnapshot(image) {
   const box = document.createElement('div');
   box.className = 'chat-vision';
   const img = document.createElement('img');
   img.src = image;
-  img.alt = '画像モデルに見せた絵';
+  img.alt = `${viewerName()}に見せた絵`;
   const text = document.createElement('p');
-  text.textContent = '画像モデルが絵を確認しています…';
+  text.textContent = `${viewerName()}が絵を確認しています…`;
   box.append(img, text);
   log.append(box);
   scrollLog();
@@ -706,31 +975,29 @@ function addSnapshot(image) {
 }
 
 async function describeDrawing(image) {
-  const reply = await engine.chat.completions.create({
-    model: VISION_MODEL.id,
+  const { text } = await complete({
+    useVisionModel: true,
     temperature: 0.2,
-    max_tokens: 120,
+    maxTokens: shortReplyLimit(),
     messages: [
       { role: 'system', content: settings.visionPrompt },
       {
         role: 'user',
         content: [
-          { type: 'image_url', image_url: { url: image } },
+          { type: 'image', url: image },
           { type: 'text', text: 'Describe the shapes in this line drawing.' }
         ]
       }
     ]
   });
-  return (reply.choices[0]?.message?.content ?? '').trim();
+  return visibleText(text);
 }
 
 // The code model reasons better in text than the small vision model, so it compares the description with the request.
 async function judgeDrawing(request, description) {
-  const reply = await engine.chat.completions.create({
-    model: loadedModel,
+  const { text } = await complete({
     temperature: 0,
-    max_tokens: 120,
-    ...(/^Qwen3/.test(loadedModel) ? { extra_body: { enable_thinking: false } } : {}),
+    maxTokens: shortReplyLimit(),
     messages: [
       { role: 'system', content: 'You check whether a line drawing matches a drawing request, using a description of the drawing.' },
       {
@@ -740,7 +1007,7 @@ async function judgeDrawing(request, description) {
       }
     ]
   });
-  return visibleText(reply.choices[0]?.message?.content ?? '');
+  return visibleText(text);
 }
 
 function parseJudgement(text) {
@@ -754,15 +1021,16 @@ async function reviewWithVision(request, code, base) {
   const status = addSnapshot(renderSnapshot(code));
   const description = await describeDrawing(status.previousElementSibling.src);
   if (interrupted) return;
-  status.textContent = `見えたもの（画像モデル）：${description}\n判定中…`;
+  const seen = `見えたもの（${viewerName()}）：${description}`;
+  status.textContent = `${seen}\n判定中…`;
   const verdict = parseJudgement(await judgeDrawing(request, description));
   if (interrupted) return;
   if (verdict.ok) {
-    status.textContent = `見えたもの（画像モデル）：${description}\n判定：依頼どおりに見えます。`;
+    status.textContent = `${seen}\n判定：依頼どおりに見えます。`;
     return;
   }
   const problems = verdict.problems || 'It does not look like what was asked.';
-  status.textContent = `見えたもの（画像モデル）：${description}\n判定：${problems}`;
+  status.textContent = `${seen}\n判定：${problems}`;
   addNote('指摘をもとに、AIに1回だけ直してもらいます。');
   const messages = [
     ...base,
@@ -781,7 +1049,7 @@ async function reviewWithVision(request, code, base) {
   const applied = applyProgram(improved);
   history[history.length - 1] = { request, code: improved, applied };
   if (settings.autoRun) interpreter.run();
-  addNote(settings.autoRun ? '✓ 画像モデルの指摘をもとに直して実行しました。' : '✓ 画像モデルの指摘をもとに直しました。');
+  addNote(settings.autoRun ? `✓ ${viewerName()}の指摘をもとに直して実行しました。` : `✓ ${viewerName()}の指摘をもとに直しました。`);
 }
 
 function onFailure(code, error) {
@@ -804,9 +1072,13 @@ async function handleRequest(request) {
     updateUi();
     return;
   }
+  if (isRemote() && settings.provider !== 'local' && !notifiedProviders.has(settings.provider)) {
+    notifiedProviders.add(settings.provider);
+    addNote(`依頼文と今のプログラム${settings.useVision ? '、描いた絵の画像' : ''}を ${PROVIDERS[settings.provider].shortLabel} の API に送ります。`);
+  }
   fitHistory(request);
   const base = buildMessages(request);
-  if (estimate(base) + settings.maxTokens > CONTEXT_WINDOW) {
+  if (estimate(base) + outputLimit() > contextWindow()) {
     addNote('依頼（と今のプログラム）が長すぎて、AIに渡せません。依頼を短くするか、「新しい会話」を押してください。', 'error');
     generating = false;
     updateUi();
@@ -824,7 +1096,7 @@ async function handleRequest(request) {
       const penProblem = error ? null : findPenUpProblem(code);
       if (!error && !penProblem) {
         onSuccess(request, code);
-        if (settings.useVision && visionLoaded) await reviewWithVision(request, code, base);
+        if (visionReady()) await reviewWithVision(request, code, base);
         return;
       }
       if (attempt === settings.maxRetries) {
@@ -836,7 +1108,7 @@ async function handleRequest(request) {
           // The program is valid, so show it anyway rather than throwing the work away.
           onSuccess(request, code);
           addNote(`注意：${penProblemNote(penProblem)}`, 'warn');
-          if (settings.useVision && visionLoaded) await reviewWithVision(request, code, base);
+          if (visionReady()) await reviewWithVision(request, code, base);
         }
         return;
       }
@@ -854,8 +1126,10 @@ async function handleRequest(request) {
       ];
     }
   } catch (error) {
-    console.error(error);
-    addNote(`生成中にエラーが起きました：${error.message ?? error}`, 'error');
+    if (!interrupted) {
+      console.error(error);
+      addNote(`生成中にエラーが起きました：${isRemote() ? describeError(error, settings.provider) : error.message ?? error}`, 'error');
+    }
   } finally {
     generating = false;
     updateUi();
@@ -865,7 +1139,8 @@ async function handleRequest(request) {
 function submit() {
   if (generating) {
     interrupted = true;
-    engine.interruptGenerate();
+    if (isRemote()) abortController?.abort();
+    else engine.interruptGenerate();
     addNote('生成を中止しました。');
     return;
   }
@@ -880,6 +1155,7 @@ function submit() {
 function init() {
   runPenCheckTests({ findPenUpProblem });
   runSnapshotTests({ renderSnapshot });
+  runProviderTests({ toOpenAiMessages, toAnthropicContent, readEvents, apiRoot, describeError, ProviderError });
   setupSettings();
   loadButton.addEventListener('click', loadModel);
   $('chat-form').addEventListener('submit', event => {
@@ -894,12 +1170,19 @@ function init() {
   input.addEventListener('keydown', event => {
     if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
       event.preventDefault();
-      if (!sendButton.disabled) submit();
+      // While a reply is being written, Enter must not stop it by accident; Esc does that.
+      if (!generating && !sendButton.disabled) submit();
+    }
+  });
+  document.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && generating && !dialog.open && !event.isComposing) {
+      event.preventDefault();
+      submit();
     }
   });
   showSuggestions();
-  if (!navigator.gpu) {
-    addNote('このブラウザーはWebGPUに対応していないため、AI Chatを使えません。Chrome または Edge の最新版で開いてください。', 'error');
+  if (!navigator.gpu && !isRemote()) {
+    addNote('このブラウザーはWebGPUに対応していないため、ブラウザー内のモデルは使えません。Chrome または Edge の最新版で開くか、⚙設定で外部のモデル（ローカルサーバーやAPI）に切り替えてください。', 'error');
   }
   updateUi();
 }

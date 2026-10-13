@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <!-- GitHub Pages cannot send headers, so the policy is a meta tag. Scripts come only from this site and jsDelivr (WebLLM);
        model files are fetched inside the Web Worker, which this meta policy does not cover. -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self'; connect-src 'self' https://cdn.jsdelivr.net https://huggingface.co https://*.huggingface.co https://*.hf.co https://raw.githubusercontent.com; worker-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self'; connect-src 'self' https://cdn.jsdelivr.net https://huggingface.co https://*.huggingface.co https://*.hf.co https://raw.githubusercontent.com http://localhost:* http://127.0.0.1:* https://api.anthropic.com https://api.openai.com https://generativelanguage.googleapis.com; worker-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
   <meta name="theme-color" content="#102b39">
   <meta name="description" content="ブラウザーでLOGOのタートルグラフィックスを実行できる、GitHub Pages対応スターターです。">
   <title>vibe-tg : Vibe Turtle Graphics</title>
@@ -81,7 +81,7 @@
           <div id="chat-log" class="chat-log" aria-live="polite"></div>
           <form id="chat-form" class="chat-form">
             <label class="sr-only" for="chat-input">AIへの依頼</label>
-            <textarea id="chat-input" rows="2" placeholder="例：家を描いて（Enterで送信、Shift+Enterで改行）" disabled></textarea>
+            <textarea id="chat-input" rows="2" placeholder="例：家を描いて（Enterで送信、Shift+Enterで改行、Escで中止）" disabled></textarea>
             <button type="submit" id="chat-send" class="chat-send" disabled>送信</button>
           </form>
         </div>
@@ -130,27 +130,73 @@
   <script src="js/logo.js"></script>
   <script src="js/site.js"></script>
   <dialog id="chat-settings" class="settings-dialog" aria-labelledby="chat-settings-title">
-    <form method="dialog" id="chat-settings-form">
+    <form method="dialog" id="chat-settings-form" novalidate>
       <h2 id="chat-settings-title">AI Chat の設定</h2>
-      <div class="settings-model-heading">
-        <span id="setting-model-label">モデル</span>
-        <button type="button" id="setting-delete-model" class="chat-button">選んだモデルの保存データを削除</button>
+      <div class="settings-grid settings-provider">
+        <label for="setting-provider">接続先</label>
+        <select id="setting-provider">
+          <option value="browser">ブラウザー内（WebLLM・インストール不要）</option>
+          <option value="local">ローカルサーバー（Ollama・LM Studio など）</option>
+          <option value="anthropic">Claude（Anthropic）</option>
+          <option value="openai">OpenAI</option>
+          <option value="gemini">Gemini（Google）</option>
+        </select>
       </div>
-      <div id="setting-model" class="model-list" role="radiogroup" aria-labelledby="setting-model-label"></div>
-      <p class="settings-note">太字はメモリ（パソコンやスマホの搭載メモリ）別のおすすめです。メモリが多いほど大きいモデルを使えますが、ダウンロードと読み込みに時間がかかります。</p>
-      <div class="settings-grid">
+      <div id="settings-browser">
+        <div class="settings-model-heading">
+          <span id="setting-model-label">モデル</span>
+          <button type="button" id="setting-delete-model" class="chat-button">選んだモデルの保存データを削除</button>
+        </div>
+        <div id="setting-model" class="model-list" role="radiogroup" aria-labelledby="setting-model-label"></div>
+        <p class="settings-note">太字はメモリ（パソコンやスマホの搭載メモリ）別のおすすめです。メモリが多いほど大きいモデルを使えますが、ダウンロードと読み込みに時間がかかります。</p>
+      </div>
+      <div id="settings-remote" class="settings-remote" hidden>
+        <div class="settings-grid">
+          <div id="setting-base-url-row" class="settings-row">
+            <label for="setting-base-url">サーバーの URL</label>
+            <input id="setting-base-url" type="text" inputmode="url" spellcheck="false" autocomplete="off" placeholder="http://localhost:11434/v1">
+          </div>
+          <label for="setting-api-key">API キー</label>
+          <div class="settings-field">
+            <input id="setting-api-key" type="password" spellcheck="false" autocomplete="off">
+            <label class="settings-check"><input id="setting-remember-key" type="checkbox"> このブラウザーに保存する</label>
+          </div>
+          <label for="setting-remote-model">モデル</label>
+          <div class="settings-field">
+            <input id="setting-remote-model" type="text" list="setting-remote-models" spellcheck="false" autocomplete="off">
+            <button type="button" id="setting-list-models" class="chat-button">一覧を取得</button>
+          </div>
+          <div id="setting-no-thinking-row" class="settings-row">
+            <span>考える過程</span>
+            <label class="settings-check"><input id="setting-no-thinking" type="checkbox"> 省いてすぐ答えさせる（速くなります。考えるモデルに reasoning_effort: none を送ります）</label>
+          </div>
+          <label for="setting-remote-max-tokens">最大出力トークン数</label>
+          <input id="setting-remote-max-tokens" type="number" min="256" max="32000" step="1">
+          <span>接続テスト</span>
+          <div class="settings-field">
+            <button type="button" id="setting-test" class="chat-button">短い質問を送って確かめる</button>
+            <span id="setting-test-result" class="settings-test-result" role="status"></span>
+          </div>
+        </div>
+        <datalist id="setting-remote-models"></datalist>
+        <p id="setting-remote-help" class="settings-note"></p>
+        <p id="setting-key-note" class="settings-note">API キーは、保存しなければこのタブを閉じると消えます。保存すると、このブラウザーの同じサイト（qramo.github.io の他のページも含む）から読める場所に残るので、共用のパソコンでは保存しないでください。</p>
+      </div>
+      <div class="settings-grid settings-common">
         <label for="setting-temperature">温度（ランダムさ）</label>
         <input id="setting-temperature" type="number" min="0" max="1.5" step="0.1">
         <label for="setting-retries">エラー時の再試行回数</label>
         <input id="setting-retries" type="number" min="0" max="5" step="1">
-        <label for="setting-max-tokens">最大出力トークン数</label>
-        <input id="setting-max-tokens" type="number" min="256" max="2048" step="64">
+        <div id="setting-max-tokens-row" class="settings-row">
+          <label for="setting-max-tokens">最大出力トークン数</label>
+          <input id="setting-max-tokens" type="number" min="256" max="2048" step="64">
+        </div>
         <span>オプション</span>
         <div class="settings-checks">
-          <label><input id="setting-grammar" type="checkbox"> LOGOの文法で出力を制約する（実験的）</label>
+          <label><input id="setting-grammar" type="checkbox"> <span id="setting-grammar-label">LOGOの文法で出力を制約する（実験的）</span></label>
           <label><input id="setting-include-code" type="checkbox"> 今のプログラムを依頼と一緒に渡す</label>
           <label><input id="setting-auto-run" type="checkbox"> 生成したら自動で実行する</label>
-          <label><input id="setting-vision" type="checkbox"> 描いた絵のスクリーンショットを画像モデルに見せて、指摘があれば1回直す（画像モデル Phi-3.5-vision も読み込みます。VRAM 約4GB、初回ダウンロード約2.8GB）</label>
+          <label><input id="setting-vision" type="checkbox"> <span id="setting-vision-label"></span></label>
           <button type="button" id="setting-delete-vision" class="chat-button settings-inline-button">画像モデルの保存データを削除</button>
         </div>
       </div>
@@ -160,11 +206,11 @@
       </div>
       <textarea id="setting-system-prompt" rows="14" spellcheck="false"></textarea>
       <div class="settings-prompt-heading">
-        <label for="setting-vision-prompt">画像モデルへの指示（画像モデルを使うときだけ）</label>
+        <label for="setting-vision-prompt">絵を説明させる指示（画像で見直すときだけ）</label>
         <button type="button" id="setting-reset-vision-prompt" class="chat-button">既定に戻す</button>
       </div>
       <textarea id="setting-vision-prompt" class="settings-prompt" rows="9" spellcheck="false"></textarea>
-      <p class="settings-note">モデルは初回だけダウンロードされ、以降はブラウザーに保存されたものを使います。設定はこのブラウザーにだけ保存されます。</p>
+      <p class="settings-note">ブラウザー内のモデルは初回だけダウンロードされ、以降はブラウザーに保存されたものを使います。設定はこのブラウザーにだけ保存されます。</p>
       <div class="settings-actions">
         <button type="button" id="chat-settings-cancel" class="chat-button">キャンセル</button>
         <button type="submit" id="chat-settings-save" class="chat-send">保存</button>

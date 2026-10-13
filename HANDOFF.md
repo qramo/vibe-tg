@@ -2,19 +2,20 @@
 
 vibe-tg : Vibe Turtle Graphics の実装メモです。次に作業する人（人間・AI どちらも）が、コードを読む前に全体像と落とし穴をつかめるように書いています。利用者向けの説明は [README.md](README.md)、出典とライセンスは [UPSTREAM.md](UPSTREAM.md) を見てください。
 
-最終更新: 2026-10-13
+最終更新: 2026-10-14
 
 ## 現状
 
 - 公開先: https://qramo.github.io/vibe-tg/ （GitHub Pages。`main` の `/(root)` を配信。ビルド工程なし）
 - `main` にプッシュすると数十秒で公開サイトに反映されます。
 - 編集欄は「Chat｜ブロック｜コード」の3タブです。
-  - Chat: ブラウザー内 LLM（WebLLM）が LOGO を生成します。
+  - Chat: LLM が LOGO を生成します。モデルはブラウザー内（WebLLM）か、外部（ローカルサーバー・Claude・OpenAI・Gemini、`js/providers.js`）を ⚙設定の「接続先」で選びます。
   - ブロック: Scratch Blocks によるドラッグ＆ドロップ編集です。
   - コード: LOGO テキストを直接編集します。
 - Scratch Blocks は `vendor/scratch-blocks/` に同梱しています（npm の integrity と jsDelivr の配信ファイルの一致を確認済み。手順は同フォルダーの README）。WebLLM（約6MB）は jsDelivr から固定バージョンで読み込み、モデルの重みと wasm は Hugging Face と GitHub から Web Worker が取得します。
 - **セキュリティ（2026-10-14 のレビュー対応）**:
   - `index.html` に meta の Content-Security-Policy を入れました（GitHub Pages はヘッダーを付けられないため）。スクリプトは自サイトと jsDelivr だけ、style は `unsafe-inline`（Blockly が style 要素を挿入するため）、img は `data:`/`blob:` も許可、Worker は自サイトだけです。
+  - `connect-src` には、外部モデル用に `http://localhost:*`・`http://127.0.0.1:*`・`https://api.anthropic.com`・`https://api.openai.com`・`https://generativelanguage.googleapis.com` だけを足しています（固定リスト。`https:` 全体は許可しない）。ほかの OpenAI 互換サービスを使うには、ここへの追加が必要です。
   - meta の CSP は Web Worker には効きません（Worker は自分のレスポンスヘッダーの方針に従う）。そのため、Worker 内のモデル取得（huggingface.co、raw.githubusercontent.com）は制限されません。
   - インラインの `onclick` はやめ、`site.js` で登録しています。CSP を緩めずに済ませるためです。新しいボタンを足すときも同じようにしてください。
   - iframe に埋め込まれたら、アプリを隠して「新しいタブで開く」だけを出します（`site.js`）。meta の CSP では `frame-ancestors` が効かないので、この形にしています。
@@ -34,6 +35,7 @@ vibe-tg : Vibe Turtle Graphics の実装メモです。次に作業する人（�
 | `js/chat.js` | ES module。Chat UI、設定、WebLLM の読み込みと生成、検証・再試行 |
 | `js/llm-worker.js` | WebLLM を Web Worker で動かすハンドラー |
 | `js/webllm.js` | WebLLM の CDN URL（ページと Worker で共有） |
+| `js/providers.js` | ES module。外部モデルの接続先（ローカルサーバー、Claude、OpenAI、Gemini）の定義と、それぞれの API 呼び出し |
 | `js/snapshot.js` | ES module。プログラムの完成した絵を、画面外でアニメーションなしに描き、3:4 の JPEG にする（画像モデル用） |
 | `js/pencheck.js` | ES module。AI が書いたプログラムを描画せずに試し実行し、ペンを上げたまま図形を描こうとしていないか調べる |
 | `vendor/scratch-blocks/` | 同梱の Scratch Blocks 2.1.19（`main.js` と `media/`、Apache 2.0） |
@@ -42,6 +44,7 @@ vibe-tg : Vibe Turtle Graphics の実装メモです。次に作業する人（�
 | `test/blocktests.js` | ES module。ブロック変換の受理／拒否と、全サンプルの往復変換テスト。ブロックエディターの読み込み後に `blocks.js` から自動実行 |
 | `test/snapshottests.js` | ES module。`snapshot.js` のテスト。`chat.js` の初期化時に自動実行 |
 | `test/penchecktests.js` | ES module。`pencheck.js` のテスト。`chat.js` の初期化時に自動実行 |
+| `test/providertests.js` | ES module。`providers.js` のメッセージ変換・SSE 読み取り・エラー文のテスト。`chat.js` の初期化時に自動実行 |
 
 読み込み順: classic script（`test/*`、`logo.i18n.js`、`logo.js`、`site.js`）→ module（`blocks.js`、`chat.js`）。
 
@@ -96,7 +99,7 @@ module からは、classic script のトップレベル宣言（`interpreter`、
 
 ## テスト
 
-ページを開くと全テストが自動で実行され、結果が console に `TEST PASSED/FAILED` で出ます（2026-10-14 時点で計149件、全件合格）。各 `run…Tests` は全件合格なら `true` を返します。
+ページを開くと全テストが自動で実行され、結果が console に `TEST PASSED/FAILED` で出ます（2026-10-14 時点で計160件、全件合格）。各 `run…Tests` は全件合格なら `true` を返します。
 
 | 種類 | 件数 | 手動で実行するとき（console） |
 |---|---|---|
@@ -106,6 +109,7 @@ module からは、classic script のトップレベル宣言（`interpreter`、
 | ブロック変換 | 50 | `(await import('./test/blocktests.js')).runBlockTests(await import('./js/blocks.js'))` |
 | ペン判定 | 25 | `(await import('./test/penchecktests.js')).runPenCheckTests(await import('./js/pencheck.js'))` |
 | 撮影 | 4 | `await (await import('./test/snapshottests.js')).runSnapshotTests(await import('./js/snapshot.js'))` |
+| 外部モデル | 11 | `await (await import('./test/providertests.js')).runProviderTests(await import('./js/providers.js'))` |
 
 - Parser テストの補助は、期待したイベントと**件数まで一致**することを確かめます。また、アプリと同じくエラーが出たら実行を止めます。
   - 以前は件数を比べておらず、エラー後に余計な描画をしても合格していました。
@@ -200,13 +204,41 @@ Scratch Blocks 2.x は Blockly 12 を同梱した単一の ESM（`dist/main.mjs`
   - 「前の」単独は「前の足」などと区別できないので含めていません。
   - プロンプトで「前の絵がなければコードなしで答えてよい」と教える方式も試しました。しかし 2B モデルが普通の依頼にもコードなしで答えるようになったため、採用していません。AI の返事にコードがなければ、常に頼み直させます。
 
+## 外部モデル（`js/providers.js`）
+
+⚙設定の「接続先」で、ブラウザー内（WebLLM）と外部モデルを切り替えます。`settings.provider` が `'browser'` なら WebLLM、`PROVIDERS` のキー（`local` / `anthropic` / `openai` / `gemini`）ならその API を呼びます。
+
+- **共通の呼び出し口**: `chat.js` の `complete({ messages, maxTokens, temperature, onText, useVisionModel, grammar })` です。生成・絵の説明・判定のすべてがここを通り、WebLLM か外部クライアントに振り分けます。
+  - メッセージは `{ role, content }` で、`content` は文字列か `[{ type: 'text', text }, { type: 'image', url: データURL }]`。各 API の形への変換は `providers.js` が行います。
+  - `usage` は `{ input, output }` にそろえ、文脈ゲージの補正（`tokenScale`）に使います。
+- **ローカルサーバー・OpenAI・Gemini** は、どれも OpenAI 互換の `/chat/completions` を `fetch` で呼び、SSE を `readEvents()` で読みます。Gemini は OpenAI 互換エンドポイント（`/v1beta/openai`）を使います。
+  - OpenAI は推論モデルが `temperature` の既定値以外を受け付けず、出力上限が `max_completion_tokens` なので、`sendsTemperature: false` と `maxTokensField` で切り替えています。
+  - ローカルは「考える過程を省く」（既定オン）で `reasoning_effort: 'none'` を送ります。Ollama の Qwen3 は、これがないと出力枠をすべて思考に使い、本文が空になりました。考えないモデルは無視し、gpt-oss は無視して考え続けます（それでも 2048 に収まった）。
+  - CORS は 2026-10-14 に確認済み：api.openai.com と Gemini は `Origin: https://qramo.github.io` を許可。Gemini の preflight は、`Authorization` と `Content-Type` 以外のヘッダーを含めると 403 になります。
+- **Claude** は公式 SDK（`@anthropic-ai/sdk@0.129.0`、jsDelivr の `+esm`）を `dangerouslyAllowBrowser: true` で使います。SDK が `anthropic-dangerous-direct-browser-access: true` を付けます。
+  - 現行の Claude は `temperature` を送ると 400 になり、Opus 5.5 は思考を切れないので、`thinking` も `temperature` も送らず、`output_config.effort: 'low'` で速さを優先しています。
+  - 返答の本文は `text_delta` だけを使います（思考は表示しない）。`stop_reason: 'refusal'` はエラーとして表示します。
+  - SDK クライアントは作成時の `fetch` を使い続けます。テストで `fetch` を差し替えるときは、モデル名を変えるなどしてクライアントを作り直させてください（`remoteClientKey`）。
+- **接続先ごとの値**（`PROVIDERS`）: 文脈の上限（ローカル 8192、Claude 200,000、OpenAI・Gemini 128,000）、送る履歴（ローカル 3往復、クラウド 4往復）、最大出力トークンの既定（ローカル 2048、クラウド 8000。思考も出力枠を使うため）。
+  - Ollama は文脈長を超えたプロンプトの**先頭（システムプロンプト）を黙って切る**ので、`OLLAMA_CONTEXT_LENGTH=8192` 以上で起動するよう案内しています。
+- **画像での見直し**は、外部モデルでは同じモデルに絵の画像を渡して説明させ、同じモデルで判定させます（Phi は読み込まない）。画像の読めないモデルではエラーになります。
+- **文法制約モード**は WebLLM 専用で、外部では無効表示にします。
+- **API キー**:
+  - 既定ではメモリーにだけ持ち（`apiKeys`）、タブを閉じると消えます。「このブラウザーに保存する」を選んだものだけ `vibe-tg-api-keys` に保存します。設定 JSON には入れません。
+  - GitHub Pages では `qramo.github.io` の他のリポジトリのページも同じオリジンなので、保存したキーはそれらから読めます。ダイアログにもその注意を書いています。
+  - キーは URL に入れません。開発中の動作確認では、ページ内で `fetch` を偽の応答に差し替えて、ヘッダーと本文の形を確かめました（本物のキーは使っていない）。
+- 外部（ローカル以外）に初めて送るときは、依頼文などを送ることをチャット欄に1回表示します。
+- 設定ダイアログは `novalidate` です。表示していない欄の値（例：`step` に合わない数）でフォームの検証が失敗すると、保存ボタンが何も言わずに効かなくなったためです。値は `clampNumber` で直します。
+- 生成中の Enter は何もしません（誤って中止しないため）。中止は Esc キーかボタンです。
+
 ## localStorage のキー
 
 | キー | 内容 |
 |---|---|
 | `oliverius_logo-English` / `-Spanish` | 最後に実行したプログラム（上流の仕組み） |
 | `vibe-tg-editor-view` | 最後に開いたタブ（`chat` / `blocks` / `text`） |
-| `vibe-tg-chat-settings` | Chat の設定 JSON |
+| `vibe-tg-chat-settings` | Chat の設定 JSON（接続先と、接続先ごとの URL・モデル名・最大出力を含む。API キーは含まない） |
+| `vibe-tg-api-keys` | 「このブラウザーに保存する」を選んだ API キー（接続先ごと） |
 
 ## ローカルでの確認
 

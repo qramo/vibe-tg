@@ -361,7 +361,7 @@ kbd {
   gap: 10px 14px;
   font-size: 13px;
 }
-.settings-grid select, .settings-grid input[type="number"] {
+.settings-grid select, .settings-grid input[type="number"], .settings-grid input[type="text"], .settings-grid input[type="password"] {
   min-height: 36px;
   padding: 0 10px;
   border: 1px solid var(--line);
@@ -435,6 +435,24 @@ kbd {
   background: #fbfdfc;
   font: 12px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
+.settings-grid input[type="text"], .settings-grid input[type="password"] {
+  min-width: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+.settings-grid input:disabled { opacity: .55; }
+/* A label and its field that are shown or hidden together while keeping the grid's two columns. */
+.settings-row { display: contents; }
+.settings-row[hidden] { display: none; }
+.settings-provider { margin-bottom: 14px; }
+.settings-remote { margin-bottom: 14px; padding: 12px; border: 1px solid var(--line); border-radius: 10px; background: #fbfdfc; }
+.settings-common { margin-top: 14px; }
+.settings-field { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; min-width: 0; }
+.settings-field input[type="text"], .settings-field input[type="password"] { flex: 1 1 220px; }
+.settings-check { display: inline-flex; align-items: center; gap: 6px; }
+.settings-test-result { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+.settings-test-result.is-ok { color: var(--green); font-weight: 700; }
+.settings-test-result.is-error { color: #b23a3a; }
 .settings-note { margin: 8px 0 0; color: var(--muted); font-size: 11px; line-height: 1.55; }
 .settings-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
 
