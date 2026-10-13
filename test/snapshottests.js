@@ -42,5 +42,6 @@ export async function runSnapshotTests({ renderSnapshot }) {
     tests.push(await assertDark("A square shows up in the snapshot", "setpensize 4 repeat 4 [fd 120 rt 90]", count => count > 200));
     tests.push(await assertDark("An empty program gives a blank picture without the turtle", "", count => count === 0));
     tests.push(await assertDark("Waiting does not hang the snapshot", "setpensize 4 wait 100 fd 100", count => count > 0));
+    tests.push(await assertDark("A small circle is zoomed in so it fills much of the picture", "setpensize 2 repeat 36 [fd 5 rt 10]", count => count > 800));
     return tests.every(test => test);
 }

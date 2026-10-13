@@ -9,6 +9,32 @@ const CANVAS_SIZE = 560;
 const IMAGE_WIDTH = 336;
 const IMAGE_HEIGHT = 448;
 const MAX_STEPS = 20000;
+// Space kept around the drawing when it is zoomed in, as a share of its size.
+const MARGIN = 0.15;
+// Smaller drawings are enlarged up to this size (in canvas pixels) so a tiny circle does not vanish into empty space.
+const MIN_VIEW = 120;
+
+/** The square area that holds everything drawn, or the whole canvas when nothing differs from the background. */
+function drawnArea(canvas, background) {
+  const { data } = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height);
+  const [br, bg, bb] = [1, 3, 5].map(i => parseInt(background.slice(i, i + 2), 16));
+  let left = canvas.width, top = canvas.height, right = -1, bottom = -1;
+  for (let y = 0; y < canvas.height; y++) {
+    for (let x = 0; x < canvas.width; x++) {
+      const i = (y * canvas.width + x) * 4;
+      if (Math.abs(data[i] - br) + Math.abs(data[i + 1] - bg) + Math.abs(data[i + 2] - bb) > 30) {
+        if (x < left) left = x;
+        if (x > right) right = x;
+        if (y < top) top = y;
+        if (y > bottom) bottom = y;
+      }
+    }
+  }
+  if (right < 0) return { x: 0, y: 0, size: canvas.width };
+  const size = Math.min(canvas.width, Math.max(MIN_VIEW, (Math.max(right - left, bottom - top) + 1) * (1 + 2 * MARGIN)));
+  const clamp = value => Math.min(Math.max(value, 0), canvas.width - size);
+  return { x: clamp((left + right) / 2 - size / 2), y: clamp((top + bottom) / 2 - size / 2), size };
+}
 
 export function renderSnapshot(code) {
   const canvas = document.createElement('canvas');
@@ -52,8 +78,10 @@ export function renderSnapshot(code) {
   image.width = IMAGE_WIDTH;
   image.height = IMAGE_HEIGHT;
   const context = image.getContext('2d');
-  context.fillStyle = turtle.getColor(turtle.state.backgroundColorIndex);
+  const background = turtle.getColor(turtle.state.backgroundColorIndex);
+  context.fillStyle = background;
   context.fillRect(0, 0, IMAGE_WIDTH, IMAGE_HEIGHT);
-  context.drawImage(canvas, 0, (IMAGE_HEIGHT - IMAGE_WIDTH) / 2, IMAGE_WIDTH, IMAGE_WIDTH);
+  const area = drawnArea(canvas, background);
+  context.drawImage(canvas, area.x, area.y, area.size, area.size, 0, (IMAGE_HEIGHT - IMAGE_WIDTH) / 2, IMAGE_WIDTH, IMAGE_WIDTH);
   return image.toDataURL('image/jpeg', 0.9);
 }

@@ -129,6 +129,17 @@ function promptHash(text) {
   return hash.toString(16).padStart(8, '0');
 }
 
+// The word "turtle" is kept out on purpose: told it was a "turtle graphics" picture, the model described a sea turtle.
+const DEFAULT_VISION_PROMPT = `You check pictures made by a simple drawing program for children.
+The program moves a pen in straight lines and turns, so every picture is a plain line drawing on a flat background:
+straight segments, polygons, and many-sided polygons that stand for circles.
+There are no animals, characters or objects in the picture unless the lines themselves clearly form them.
+Look only at the lines and shapes. Ignore any written words, and do not imagine colors, faces or details that are not drawn.
+
+Reply in exactly two lines:
+Line 1: the shapes you see, in a few words (for example "a square with a triangle on top").
+Line 2: "OK" if the shapes clearly form what was asked. Otherwise "FIX:" followed by at most three short, concrete problems (a missing part, a wrong position or a wrong size).`;
+
 const DEFAULT_SETTINGS = {
   model: 'Qwen3-4B-q4f16_1-MLC',
   temperature: 0.3,
@@ -138,6 +149,7 @@ const DEFAULT_SETTINGS = {
   includeCode: true,
   autoRun: true,
   useVision: false,
+  visionPrompt: DEFAULT_VISION_PROMPT,
   systemPrompt: DEFAULT_SYSTEM_PROMPT,
   // Where WebLLM keeps downloaded models: the Cache API first, OPFS after a Cache API failure.
   cacheBackend: 'cache'
@@ -191,6 +203,7 @@ function loadSettings() {
     if (stored.systemPrompt && RETIRED_DEFAULT_PROMPTS.includes(promptHash(stored.systemPrompt))) delete stored.systemPrompt;
     const merged = { ...DEFAULT_SETTINGS, ...stored };
     merged.systemPrompt ??= DEFAULT_SYSTEM_PROMPT;
+    merged.visionPrompt ??= DEFAULT_VISION_PROMPT;
     if (!MODELS.some(model => model.id === merged.model)) merged.model = DEFAULT_SETTINGS.model;
     return merged;
   } catch (_) {
@@ -200,7 +213,11 @@ function loadSettings() {
 
 function saveSettings() {
   // An unchanged prompt is stored as null so a future default replaces it.
-  const stored = { ...settings, systemPrompt: settings.systemPrompt === DEFAULT_SYSTEM_PROMPT ? null : settings.systemPrompt };
+  const stored = {
+    ...settings,
+    systemPrompt: settings.systemPrompt === DEFAULT_SYSTEM_PROMPT ? null : settings.systemPrompt,
+    visionPrompt: settings.visionPrompt === DEFAULT_VISION_PROMPT ? null : settings.visionPrompt
+  };
   try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(stored)); } catch (_) { /* storage unavailable */ }
 }
 
@@ -289,6 +306,7 @@ function openSettings() {
   $('setting-auto-run').checked = settings.autoRun;
   $('setting-vision').checked = settings.useVision;
   $('setting-system-prompt').value = settings.systemPrompt;
+  $('setting-vision-prompt').value = settings.visionPrompt;
   dialog.showModal();
 }
 
@@ -297,6 +315,7 @@ function setupSettings() {
   $('chat-settings-cancel').addEventListener('click', () => dialog.close());
   $('setting-delete-model').addEventListener('click', deleteSelectedModel);
   $('setting-reset-prompt').addEventListener('click', () => { $('setting-system-prompt').value = DEFAULT_SYSTEM_PROMPT; });
+  $('setting-reset-vision-prompt').addEventListener('click', () => { $('setting-vision-prompt').value = DEFAULT_VISION_PROMPT; });
   $('chat-settings-form').addEventListener('submit', () => {
     // Keep settings the dialog does not show (such as cacheBackend).
     settings = {
@@ -309,7 +328,8 @@ function setupSettings() {
       includeCode: $('setting-include-code').checked,
       autoRun: $('setting-auto-run').checked,
       useVision: $('setting-vision').checked,
-      systemPrompt: $('setting-system-prompt').value.trim() || DEFAULT_SYSTEM_PROMPT
+      systemPrompt: $('setting-system-prompt').value.trim() || DEFAULT_SYSTEM_PROMPT,
+      visionPrompt: $('setting-vision-prompt').value.trim() || DEFAULT_VISION_PROMPT
     };
     saveSettings();
     updateUi();
@@ -498,6 +518,8 @@ async function loadModel() {
   };
   let retryWithOpfs = false;
   const models = settings.useVision ? [settings.model, VISION_MODEL.id] : [settings.model];
+  // Models are several GB; without persistence the browser may evict them when storage runs low and download them again.
+  navigator.storage?.persist?.().catch(() => {});
   try {
     const webllm = await import(WEBLLM_URL);
     if (!engine) {
@@ -671,20 +693,17 @@ async function askVision(request, image) {
     model: VISION_MODEL.id,
     temperature: 0.2,
     max_tokens: 160,
-    messages: [{
-      role: 'user',
-      content: [
-        { type: 'image_url', image_url: { url: image } },
-        {
-          type: 'text',
-          // Asking for a description first, and to ignore text, keeps the model from approving a drawing just because a label names the object.
-          text: `This image is a simple line drawing made by a turtle graphics program. The user asked for: "${request}" (the request may be in Japanese).\n` +
-            'Line 1: describe the lines and shapes you see in a few words. Ignore any written words.\n' +
-            'Line 2: write "OK" only if the shapes clearly form what was asked. Otherwise write "FIX:" followed by at most three short, concrete problems ' +
-            '(for example a missing part, a wrong position or a wrong size).'
-        }
-      ]
-    }]
+    messages: [
+      { role: 'system', content: settings.visionPrompt },
+      {
+        role: 'user',
+        content: [
+          { type: 'image_url', image_url: { url: image } },
+          // Phi-3.5-vision tends to answer only the first line unless the format is repeated next to the image.
+          { type: 'text', text: `The request was: "${request}" (it may be in Japanese). Reply in the two-line format: the shapes you see, then OK or FIX:.` }
+        ]
+      }
+    ]
   });
   return (reply.choices[0]?.message?.content ?? '').trim();
 }
