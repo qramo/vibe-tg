@@ -25,6 +25,7 @@
 - 変数名の2文字目以降と、英字で始まる定義名に数字を使えるようにした（`:r1`、`square2`）。
 - 日本語のコマンド・定義名・変数名を読めるようにした（`Tokenizer.isLetter` の拡張と NFKC 正規化）。`js/logo.i18n.js` には日本語の別名・エラー文・サンプルを追加した。
 - 「画面を消去」はプログラムを消さず、絵だけを消すようにした（プログラムは新しい `clearCode()` で消す）。
+- 実行が10万ステップを超えたら止めるようにした（エラー `STEP_LIMIT_EXCEEDED` と3言語のメッセージを追加）。
 - 実行のたびに（「画面を消去」でも）ペンを初期状態（下ろす・黒・太さ1・既定の文字サイズ・タートル表示）に戻すようにした。前回の実行の `PENUP` などが持ち越されないようにするため。
 
 `test/parsertests.js` には、これらの境界ケースのテストを追加しました。また、描画イベントの件数も比べ、エラーで実行を止めるようにテスト補助を変えています。`test/turtletests.js`、`test/blocktests.js`、`test/penchecktests.js` は、このプロジェクトで追加したテストです。
@@ -35,7 +36,7 @@
 
 ## Scratch Blocks
 
-ブロックエディター（`js/blocks.js`）は [scratchfoundation/scratch-blocks](https://github.com/scratchfoundation/scratch-blocks)（Apache License 2.0、Blocklyを含む）を利用しています。リポジトリには同梱せず、実行時にjsDelivrから固定バージョン（`js/blocks.js` の `SCRATCH_BLOCKS_VERSION`）を読み込みます。Scratchの名称・ロゴ等はScratch Foundationの商標であり、本プロジェクトはScratch Foundationとは関係ありません。
+ブロックエディター（`js/blocks.js`）は [scratchfoundation/scratch-blocks](https://github.com/scratchfoundation/scratch-blocks)（Apache License 2.0、Blocklyを含む）を利用しています。npm パッケージ `scratch-blocks@2.1.19` の `dist/main.mjs`（`main.js` に改名）と `media/` を、ライセンス・商標の文書とあわせて `vendor/scratch-blocks/` に同梱しています（効果音のファイルは除外）。Scratchの名称・ロゴ等はScratch Foundationの商標であり、本プロジェクトはScratch Foundationとは関係ありません。
 
 ## WebLLM と AI モデル
 

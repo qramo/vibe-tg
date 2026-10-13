@@ -1,6 +1,6 @@
 # vibe-tg : Vibe Turtle Graphics
 
-ブラウザーでLOGOのタートルグラフィックスを動かす、静的サイト用の初期パッケージです。**ビルド不要**で、ファイル一式をGitHubリポジトリのルートに置くだけで公開できます。ブロックエディターは [Scratch Blocks](https://github.com/scratchfoundation/scratch-blocks)、AI Chat は [WebLLM](https://github.com/mlc-ai/web-llm) をCDN（jsDelivr）から読み込んで動作します。
+ブラウザーでLOGOのタートルグラフィックスを動かす、静的サイト用の初期パッケージです。**ビルド不要**で、ファイル一式をGitHubリポジトリのルートに置くだけで公開できます。ブロックエディターは同梱の [Scratch Blocks](https://github.com/scratchfoundation/scratch-blocks)（`vendor/`）、AI Chat は [WebLLM](https://github.com/mlc-ai/web-llm) を CDN（jsDelivr）から読み込んで動作します。
 
 ## GitHub Pagesで公開する
 
@@ -59,7 +59,8 @@ python3 -m http.server 8000
 │   ├── llm-worker.js     # WebLLMを動かすWeb Worker
 │   ├── webllm.js         # WebLLMの読み込み先
 │   └── pencheck.js       # AIのコードのペン上げ忘れチェック
-└── test/                 # ブラウザー内テスト（ページを開くと自動実行、結果はconsole）
+├── test/                 # ブラウザー内テスト（ページを開くと自動実行、結果はconsole）
+└── vendor/scratch-blocks/ # 同梱のScratch Blocks（Apache 2.0）
 ```
 
 `css/logo.css` はレスポンシブ表示に合わせて調整しています。インタプリタ本体と言語定義、テストは上流プロジェクト由来です。出典・ライセンスの詳細は [UPSTREAM.md](UPSTREAM.md) と [LICENSE](LICENSE) を確認してください。

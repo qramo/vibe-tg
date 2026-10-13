@@ -3,6 +3,9 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <!-- GitHub Pages cannot send headers, so the policy is a meta tag. Scripts come only from this site and jsDelivr (WebLLM);
+       model files are fetched inside the Web Worker, which this meta policy does not cover. -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self'; connect-src 'self' https://cdn.jsdelivr.net https://huggingface.co https://*.huggingface.co https://*.hf.co https://raw.githubusercontent.com; worker-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
   <meta name="theme-color" content="#102b39">
   <meta name="description" content="ブラウザーでLOGOのタートルグラフィックスを実行できる、GitHub Pages対応スターターです。">
   <title>vibe-tg : Vibe Turtle Graphics</title>
@@ -37,9 +40,9 @@
         <button type="button" id="logo-clear-code" title="エディタのプログラムを消します（絵は残ります）">コードを消去</button>
       </div>
       <div class="controls-group controls-stage">
-        <button type="button" id="logo-run" onclick="interpreter.run()">実行 ▶</button>
-        <button type="button" id="logo-stop" onclick="interpreter.stop()">停止 ■</button>
-        <button type="button" id="logo-clear" onclick="interpreter.clear()" title="描いた絵を消します（プログラムは残ります）">画面を消去</button>
+        <button type="button" id="logo-run">実行 ▶</button>
+        <button type="button" id="logo-stop">停止 ■</button>
+        <button type="button" id="logo-clear" title="描いた絵を消します（プログラムは残ります）">画面を消去</button>
       </div>
     </section>
 
@@ -148,6 +151,7 @@
           <label><input id="setting-include-code" type="checkbox"> 今のプログラムを依頼と一緒に渡す</label>
           <label><input id="setting-auto-run" type="checkbox"> 生成したら自動で実行する</label>
           <label><input id="setting-vision" type="checkbox"> 描いた絵のスクリーンショットを画像モデルに見せて、指摘があれば1回直す（画像モデル Phi-3.5-vision も読み込みます。VRAM 約4GB、初回ダウンロード約2.8GB）</label>
+          <button type="button" id="setting-delete-vision" class="chat-button settings-inline-button">画像モデルの保存データを削除</button>
         </div>
       </div>
       <div class="settings-prompt-heading">

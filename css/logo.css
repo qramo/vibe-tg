@@ -417,6 +417,7 @@ kbd {
 .settings-checks { display: grid; gap: 6px; }
 .settings-checks label { display: flex; align-items: flex-start; gap: 8px; line-height: 1.5; }
 .settings-checks input { margin-top: 3px; }
+.settings-inline-button { justify-self: start; }
 .settings-prompt-heading {
   display: flex;
   align-items: center;

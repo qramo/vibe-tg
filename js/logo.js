@@ -266,7 +266,8 @@ class Parser {
         "PROCEDURE_WITHOUT_END_TOKEN": 5,
         "UNKNOWN_TOKEN_FOUND": 6,
         "UNMATCHED_CLOSING_BRACKET": 7,
-        "CODEBLOCK_EXPECTED_CLOSING_BRACKET": 8
+        "CODEBLOCK_EXPECTED_CLOSING_BRACKET": 8,
+        "STEP_LIMIT_EXCEEDED": 9
     };
     static events = {
         "errorEvent": {
@@ -292,6 +293,7 @@ class Parser {
     constructor() {
         this.fps = 10;
         this.maxProcedureCallStack = 100;
+        this.maxSteps = 100000; // About 2.8 hours at 10 steps per second; stops runaway programs such as repeat 100000 [...]
     }
     assignVariable(variableName) {        
         let item = this.peekLastProcedureCallStackItem();
@@ -537,6 +539,7 @@ class Parser {
         this.procedureCallStack = [];
         this.pauseParsingRequested = false;
         this.stopParsingRequested = false;
+        this.steps = 0;
 
         if (this.hasUnclosedCodeBlock(tokens)) {
             this.raiseErrorEvent(Parser.errors.CODEBLOCK_EXPECTED_CLOSING_BRACKET, []);
@@ -611,6 +614,12 @@ class Parser {
     }
     parsingStep() {
         if (this.pauseParsingRequested) {
+            return;
+        }
+        this.steps++;
+        if (this.steps > this.maxSteps) {
+            this.stopParsing();
+            this.raiseErrorEvent(Parser.errors.STEP_LIMIT_EXCEEDED, [this.maxSteps]);
             return;
         }
         this.getNextToken();
@@ -1124,6 +1133,10 @@ class Interpreter {
                     break;
                 case Parser.errors.CODEBLOCK_EXPECTED_CLOSING_BRACKET:
                     message = this.locale.errors.CODEBLOCK_EXPECTED_CLOSING_BRACKET;
+                    break;
+                case Parser.errors.STEP_LIMIT_EXCEEDED:
+                    message = this.locale.errors.STEP_LIMIT_EXCEEDED;
+                    message = message.replace("{0}", e.detail.args[0]);
                     break;
             }
             this.setStatusBar(message);

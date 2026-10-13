@@ -1,4 +1,19 @@
 (() => {
+  // Refuse to run inside another site's frame, where hidden buttons could start multi-GB model downloads (clickjacking).
+  if (window.top !== window.self) {
+    document.querySelector('.app-shell').style.display = 'none';
+    const notice = document.createElement('p');
+    notice.textContent = 'このページは他のサイトの中では動きません。';
+    const link = document.createElement('a');
+    link.href = location.href;
+    link.target = '_blank';
+    link.rel = 'noopener';
+    link.textContent = '新しいタブで開く';
+    notice.append(' ', link);
+    document.body.prepend(notice);
+    return;
+  }
+
   const editor = document.getElementById('logo-editor');
   const languageSelect = document.getElementById('logo-languages');
   const examplesSelect = document.getElementById('logo-examples');
@@ -21,6 +36,10 @@
 
   localizeChrome();
   languageSelect.addEventListener('change', localizeChrome);
+
+  document.getElementById('logo-run').addEventListener('click', () => interpreter.run());
+  document.getElementById('logo-stop').addEventListener('click', () => interpreter.stop());
+  document.getElementById('logo-clear').addEventListener('click', () => interpreter.clear());
 
   document.getElementById('logo-clear-code').addEventListener('click', () => {
     if (editor.value.trim() && !window.confirm('プログラムを消去しますか？（描いた絵は残ります）')) return;

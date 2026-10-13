@@ -102,7 +102,8 @@ const i18n = {
             "PROCEDURE_WITHOUT_END_TOKEN": "Last procedure is missing the primitive 'END'",
             "UNKNOWN_TOKEN_FOUND": "Found a symbol '{0}' that wasn't recognized",
             "UNMATCHED_CLOSING_BRACKET": "A closing bracket ] was found without a matching opening bracket [ first",
-            "CODEBLOCK_EXPECTED_CLOSING_BRACKET": "A code block opened with [ is missing its closing bracket ]"
+            "CODEBLOCK_EXPECTED_CLOSING_BRACKET": "A code block opened with [ is missing its closing bracket ]",
+            "STEP_LIMIT_EXCEEDED": "The program ran more than {0} steps, so we stopped it"
         },
         "UI": [
             {
@@ -373,7 +374,8 @@ const i18n = {
             "PROCEDURE_WITHOUT_END_TOKEN": "Al último procedimiento le falta la primitiva 'FIN'",
             "UNKNOWN_TOKEN_FOUND": "Hemos encontrado un símbolo '{0}' que no hemos reconocido",
             "UNMATCHED_CLOSING_BRACKET": "Un corchete ] fue encontrado sin encontrar primero un corchete [",
-            "CODEBLOCK_EXPECTED_CLOSING_BRACKET": "A un bloque abierto con [ le falta el corchete de cierre ]"
+            "CODEBLOCK_EXPECTED_CLOSING_BRACKET": "A un bloque abierto con [ le falta el corchete de cierre ]",
+            "STEP_LIMIT_EXCEEDED": "El programa ha ejecutado más de {0} pasos y lo hemos parado"
         },
         "UI": [
             {
@@ -644,7 +646,8 @@ const i18n = {
             "PROCEDURE_WITHOUT_END_TOKEN": "最後の定義に「おわり」がありません",
             "UNKNOWN_TOKEN_FOUND": "認識できない記号「{0}」があります",
             "UNMATCHED_CLOSING_BRACKET": "対応する [ がないのに ] があります",
-            "CODEBLOCK_EXPECTED_CLOSING_BRACKET": "[ で始めたブロックを閉じる ] がありません"
+            "CODEBLOCK_EXPECTED_CLOSING_BRACKET": "[ で始めたブロックを閉じる ] がありません",
+            "STEP_LIMIT_EXCEEDED": "{0}ステップを超えたので、プログラムを止めました"
         },
         "UI": [
             {

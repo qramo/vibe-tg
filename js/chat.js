@@ -1,5 +1,5 @@
 // AI Chat: an in-browser LLM (WebLLM) writes LOGO programs, which are checked, put into the editor and run.
-import { checkProgram, applyProgram, selectView } from './blocks.js';
+import { checkProgram, applyProgram, selectView, translateProgram, currentLanguage } from './blocks.js';
 import { WEBLLM_URL } from './webllm.js';
 import { findPenUpProblem } from './pencheck.js';
 import { renderSnapshot } from './snapshot.js';
@@ -53,23 +53,8 @@ Rules:
 - The background is 15 (light grey), so lines in 15 (grey), 7 (white), 6 (yellow), 3 (cyan) or 11 (aqua) are very hard to see. Use darker colors for lines.
 - The turtle starts at the center facing up. The canvas reaches about 270 steps from the center in every direction.
 
-How to draw well:
-- Before every move, work out where the turtle is and which way it faces.
-- Move to the start of each part with pu, moves, then pd.
-- Circle: repeat 36 [fd S rt 10] draws a circle about 11 * S wide on the right side of the turtle.
-- Regular polygon with N sides: repeat N [fd S rt 360 / N].
-
-Reference samples: these only show how programs are written. They are not part of the conversation and are not pictures drawn earlier.
-
-Sample program for a star:
-\`\`\`logo
-cs
-setpc 14
-setpensize 3
-pu fd 60 lt 90 fd 100 rt 180 pd
-repeat 5 [fd 200 rt 144]
-pu home pd
-\`\`\`
+Reference sample: it only shows how a program is written. It is not part of the conversation and not a picture drawn earlier.
+Never copy it for a different request; write a new program for what is asked.
 
 Sample program for a tree with a brown trunk and round green leaves:
 \`\`\`logo
@@ -89,7 +74,13 @@ setpc 2
 rt 180
 circle 10
 pu home pd
-\`\`\``;
+\`\`\`
+
+How to draw well:
+- Before every move, work out where the turtle is and which way it faces.
+- Move to the start of each part with pu, moves, then pd.
+- Circle: repeat 36 [fd S rt 10] draws a circle about 11 * S wide on the right side of the turtle.
+- Regular polygon with N sides: repeat N [fd S rt 360 / N].`;
 
 // Mirrors what js/blocks.js can convert, so constrained output is always syntactically valid.
 // It keeps the reply shape the system prompt asks for (one sentence, then a fenced block): forcing models to start
@@ -118,7 +109,7 @@ const LOGO_GRAMMAR = [
 
 // FNV-1a hashes of earlier default system prompts. A saved copy of one of them is treated as "use the default",
 // so people who once pressed Save still get prompt improvements. Add the old hash here whenever the default changes.
-const RETIRED_DEFAULT_PROMPTS = ['daf0cfbf', 'd7d65135', '02a20e71', '8128ff8e'];
+const RETIRED_DEFAULT_PROMPTS = ['daf0cfbf', 'd7d65135', '02a20e71', '8128ff8e', '8df819b7'];
 
 function promptHash(text) {
   let hash = 0x811c9dc5;
@@ -160,6 +151,8 @@ const SUGGESTIONS = ['家を描いて', '花を描いて', '雪だるまを描�
 
 // Every model in MODELS is configured with a 4096-token context in WebLLM 0.2.85.
 const CONTEXT_WINDOW = 4096;
+// Only the latest exchanges are sent: enough for "make the roof red", while older programs would anchor small models.
+const MAX_HISTORY_EXCHANGES = 2;
 // Kept free beyond the output limit so a retry (the failed program plus the error message) still fits.
 const RETRY_MARGIN = 350;
 // Chat-template tokens added around each message.
@@ -285,6 +278,12 @@ async function markCachedModels() {
   } catch (_) { /* the rows just stay without the cached mark */ }
 }
 
+async function deleteVisionModel() {
+  if (!confirm(`画像モデル（${VISION_MODEL.label}）の保存データを削除しますか？次に使うときは再ダウンロードが必要です。`)) return;
+  const webllm = await import(WEBLLM_URL);
+  await webllm.deleteModelAllInfoInCache(VISION_MODEL.id, appConfig(webllm));
+}
+
 async function deleteSelectedModel() {
   const id = selectedModelId();
   if (!confirm(`${modelInfo(id).label} の保存データを削除しますか？次に使うときは再ダウンロードが必要です。`)) return;
@@ -312,6 +311,7 @@ function setupSettings() {
   $('chat-settings-open').addEventListener('click', openSettings);
   $('chat-settings-cancel').addEventListener('click', () => dialog.close());
   $('setting-delete-model').addEventListener('click', deleteSelectedModel);
+  $('setting-delete-vision').addEventListener('click', deleteVisionModel);
   $('setting-reset-prompt').addEventListener('click', () => { $('setting-system-prompt').value = DEFAULT_SYSTEM_PROMPT; });
   $('setting-reset-vision-prompt').addEventListener('click', () => { $('setting-vision-prompt').value = DEFAULT_VISION_PROMPT; });
   $('chat-settings-form').addEventListener('submit', () => {
@@ -426,6 +426,7 @@ function buildMessages(request, items = history) {
 
 /** Drops the oldest exchanges until the request, the output limit and a retry fit in the context window. */
 function fitHistory(request) {
+  while (history.length > MAX_HISTORY_EXCHANGES) history.shift();
   let dropped = 0;
   while (history.length && estimate(buildMessages(request)) + settings.maxTokens + RETRY_MARGIN > CONTEXT_WINDOW) {
     history.shift();
@@ -554,7 +555,7 @@ async function loadModel() {
       saveSettings();
       try {
         const webllm = await import(WEBLLM_URL);
-        await webllm.deleteModelAllInfoInCache(settings.model, appConfig(webllm, 'cache'));
+        for (const id of models) await webllm.deleteModelAllInfoInCache(id, appConfig(webllm, 'cache'));
       } catch (_) { /* leftovers in the Cache API only waste space */ }
       addNote('ブラウザーの Cache Storage にモデルを保存できなかったので、保存先を OPFS に切り替えて読み込み直します。');
       return;
@@ -620,14 +621,32 @@ function isTextReply(reply) {
   return !reply.includes('```') && checkProgram(extractCode(reply)) !== null;
 }
 
+let translated = { key: '', program: '' };
+
+function inEnglish(program) {
+  const language = currentLanguage();
+  if (language === 'English') return program;
+  // The gauge asks on every keystroke, so remember the last translation.
+  const key = `${language}\n${program}`;
+  if (translated.key !== key) {
+    let english = '';
+    try {
+      english = translateProgram(program, language, 'English') ?? '';
+    } catch (_) { /* a program that cannot be read is not sent */ }
+    translated = { key, program: english };
+  }
+  return translated.program;
+}
+
 function currentProgram() {
-  // Only an English program can be shown to the model, since the prompt teaches English commands.
-  if (!settings.includeCode || interpreter.locale !== i18n.English) return '';
+  if (!settings.includeCode) return '';
   const program = editor.value.trim();
+  if (!program) return '';
   // The model's last program is already in the history; send the editor only after someone changed it.
   if (history.length && program === history.at(-1).applied.trim()) return '';
   if (program === programAtNewSession) return '';
-  return program;
+  // The prompt teaches English commands, so Japanese or Spanish programs are translated first.
+  return inEnglish(program);
 }
 
 function buildUserMessage(request) {
@@ -787,6 +806,12 @@ async function handleRequest(request) {
   }
   fitHistory(request);
   const base = buildMessages(request);
+  if (estimate(base) + settings.maxTokens > CONTEXT_WINDOW) {
+    addNote('依頼（と今のプログラム）が長すぎて、AIに渡せません。依頼を短くするか、「新しい会話」を押してください。', 'error');
+    generating = false;
+    updateUi();
+    return;
+  }
   let messages = base;
   try {
     for (let attempt = 0; attempt <= settings.maxRetries; attempt++) {

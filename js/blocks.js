@@ -3,9 +3,9 @@
 
 import { runBlockTests } from '../test/blocktests.js';
 
-const SCRATCH_BLOCKS_VERSION = '2.1.19';
-const SCRATCH_BLOCKS_URL = `https://cdn.jsdelivr.net/npm/scratch-blocks@${SCRATCH_BLOCKS_VERSION}/dist/main.mjs`;
-const SCRATCH_BLOCKS_MEDIA = `https://cdn.jsdelivr.net/npm/scratch-blocks@${SCRATCH_BLOCKS_VERSION}/media/`;
+// scratch-blocks 2.1.19 is bundled in vendor/ (see vendor/scratch-blocks/README.md) rather than loaded from a CDN.
+const SCRATCH_BLOCKS_URL = new URL('../vendor/scratch-blocks/main.js', import.meta.url).href;
+const SCRATCH_BLOCKS_MEDIA = new URL('../vendor/scratch-blocks/media/', import.meta.url).href;
 const VIEW_STORAGE_KEY = 'vibe-tg-editor-view';
 
 const editor = document.getElementById('logo-editor');
@@ -742,16 +742,28 @@ export function applyProgram(text) {
 
 /** Converts a program to blocks and back on a throwaway workspace, in the given LOGO language (used by the tests). */
 export function roundTripProgram(text, language) {
-  const locale = i18n[language];
+  return translateProgram(text, language, language);
+}
+
+/**
+ * Rewrites a program from one LOGO language into another through blocks, on a throwaway workspace.
+ * Throws ConversionError when the program cannot be read; returns null before the block editor has loaded.
+ */
+export function translateProgram(text, fromLanguage, toLanguage) {
+  if (!SB) return null;
   const scratch = new SB.Workspace(new SB.Options({ media: SCRATCH_BLOCKS_MEDIA }));
-  codeLocale = locale;
+  codeLocale = i18n[toLanguage];
   try {
-    SB.serialization.workspaces.load(textToWorkspaceState(text, new Tokenizer(locale.primitiveAliases)), scratch);
+    SB.serialization.workspaces.load(textToWorkspaceState(text, new Tokenizer(i18n[fromLanguage].primitiveAliases)), scratch);
     return generateCode(scratch);
   } finally {
     codeLocale = null;
     scratch.dispose();
   }
+}
+
+export function currentLanguage() {
+  return Object.keys(i18n).find(name => i18n[name] === interpreter.locale);
 }
 
 export function selectView(name) {
@@ -847,6 +859,23 @@ function hookInterpreter() {
     if (view === 'blocks' && (event.ctrlKey || event.metaKey) && event.key === 'Enter' && !event.isComposing) {
       event.preventDefault();
       interpreter.run();
+    }
+  });
+
+  // Switching language loads that language's last run, which is empty the first time; translate the program instead.
+  const languageSelect = document.getElementById('logo-languages');
+  let before = { language: currentLanguage(), program: '' };
+  // At the target, capture listeners run before the Interpreter's own change listener, so this still sees the old program.
+  languageSelect.addEventListener('change', () => {
+    before = { language: currentLanguage(), program: editor.value };
+  }, { capture: true });
+  languageSelect.addEventListener('change', () => {
+    if (editor.value.trim() || !before.program.trim()) return;
+    try {
+      const translated = translateProgram(before.program, before.language, currentLanguage());
+      if (translated) interpreter.setEditor(translated);
+    } catch (error) {
+      if (!(error instanceof ConversionError)) throw error;
     }
   });
 }

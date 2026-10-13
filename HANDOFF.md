@@ -12,7 +12,14 @@ vibe-tg : Vibe Turtle Graphics の実装メモです。次に作業する人（�
   - Chat: ブラウザー内 LLM（WebLLM）が LOGO を生成します。
   - ブロック: Scratch Blocks によるドラッグ＆ドロップ編集です。
   - コード: LOGO テキストを直接編集します。
-- 外部ライブラリーはすべて CDN（jsDelivr）から固定バージョンで読み込みます。リポジトリには同梱していません。
+- Scratch Blocks は `vendor/scratch-blocks/` に同梱しています（npm の integrity と jsDelivr の配信ファイルの一致を確認済み。手順は同フォルダーの README）。WebLLM（約6MB）は jsDelivr から固定バージョンで読み込み、モデルの重みと wasm は Hugging Face と GitHub から Web Worker が取得します。
+- **セキュリティ（2026-10-14 のレビュー対応）**:
+  - `index.html` に meta の Content-Security-Policy を入れました（GitHub Pages はヘッダーを付けられないため）。スクリプトは自サイトと jsDelivr だけ、style は `unsafe-inline`（Blockly が style 要素を挿入するため）、img は `data:`/`blob:` も許可、Worker は自サイトだけです。
+  - meta の CSP は Web Worker には効きません（Worker は自分のレスポンスヘッダーの方針に従う）。そのため、Worker 内のモデル取得（huggingface.co、raw.githubusercontent.com）は制限されません。
+  - インラインの `onclick` はやめ、`site.js` で登録しています。CSP を緩めずに済ませるためです。新しいボタンを足すときも同じようにしてください。
+  - iframe に埋め込まれたら、アプリを隠して「新しいタブで開く」だけを出します（`site.js`）。meta の CSP では `frame-ancestors` が効かないので、この形にしています。
+  - `eval`・`innerHTML`・`new Function` は使っていません。動的な表示はすべて `textContent` です。
+  - 実行は10万ステップで止まります（`Parser.maxSteps`、エラー `STEP_LIMIT_EXCEEDED`）。
 
 ## ファイル構成と責務
 
@@ -29,6 +36,7 @@ vibe-tg : Vibe Turtle Graphics の実装メモです。次に作業する人（�
 | `js/webllm.js` | WebLLM の CDN URL（ページと Worker で共有） |
 | `js/snapshot.js` | ES module。プログラムの完成した絵を、画面外でアニメーションなしに描き、3:4 の JPEG にする（画像モデル用） |
 | `js/pencheck.js` | ES module。AI が書いたプログラムを描画せずに試し実行し、ペンを上げたまま図形を描こうとしていないか調べる |
+| `vendor/scratch-blocks/` | 同梱の Scratch Blocks 2.1.19（`main.js` と `media/`、Apache 2.0） |
 | `test/tokenizertests.js` `test/parsertests.js` | 上流由来のテスト（Parser 側は境界ケースを追加）。`Interpreter` の生成時に自動実行され、結果は console に出る |
 | `test/turtletests.js` | 色番号の範囲などタートル描画のテスト。`Interpreter` の生成時に自動実行 |
 | `test/blocktests.js` | ES module。ブロック変換の受理／拒否と、全サンプルの往復変換テスト。ブロックエディターの読み込み後に `blocks.js` から自動実行 |
@@ -82,27 +90,29 @@ module からは、classic script のトップレベル宣言（`interpreter`、
   - `tokenize()` の最初に NFKC 正規化をかけ、日本語入力で混ざる全角の数字・`［］`・`：`・全角スペースを半角に揃える。
   - 別名の最後の要素が、ブロックや AI のコードから生成するときの表記になる（日本語はひらがな）。
   - 日本語サンプル8つは英語版と同じ描画イベント列になることを確認済み。
+- 言語を切り替えたとき、新しい言語の保存済みプログラムがなければ、元の言語のプログラムを新しい言語に翻訳して引き継ぐ（`blocks.js`。上流は空にしていた）。
 - 「画面を消去」（`Interpreter.clear()`）は絵とペンの状態だけを戻し、エディタは消さない。エディタを消すのは新しい `clearCode()`（「コードを消去」ボタン。中身があれば `site.js` で確認ダイアログを出す）。上流の `clear()` はエディタも消していた。言語切り替え時の `clear()` → `setEditor(保存済みの最後の実行)` の流れはそのまま動く。
 - 「実行」と「画面を消去」のたびに、ペンを初期状態に戻す（`Turtle.resetPen()`：ペンを下ろす、色は黒、太さ1、文字の大きさ既定、タートル表示）。以前は前回の `pu` や色が持ち越され、`pu` で終わるプログラムの次の実行で線が描かれなかった。描いた絵と背景色は残る。
 
 ## テスト
 
-ページを開くと全テストが自動で実行され、結果が console に `TEST PASSED/FAILED` で出ます（2026-10-13 時点で計133件、全件合格）。各 `run…Tests` は全件合格なら `true` を返します。
+ページを開くと全テストが自動で実行され、結果が console に `TEST PASSED/FAILED` で出ます（2026-10-14 時点で計149件、全件合格）。各 `run…Tests` は全件合格なら `true` を返します。
 
 | 種類 | 件数 | 手動で実行するとき（console） |
 |---|---|---|
-| Tokenizer | 29 | `runTokenizerTests(i18n)` |
-| Parser | 29 | `runParserTests(Tokenizer, Parser, i18n)` |
+| Tokenizer | 31 | `runTokenizerTests(i18n)` |
+| Parser | 30 | `runParserTests(Tokenizer, Parser, i18n)` |
 | Turtle | 9 | `runTurtleTests(Turtle)` |
-| ブロック変換 | 49 | `(await import('./test/blocktests.js')).runBlockTests(await import('./js/blocks.js'))` |
-| ペン判定 | 17 | `(await import('./test/penchecktests.js')).runPenCheckTests(await import('./js/pencheck.js'))` |
+| ブロック変換 | 50 | `(await import('./test/blocktests.js')).runBlockTests(await import('./js/blocks.js'))` |
+| ペン判定 | 25 | `(await import('./test/penchecktests.js')).runPenCheckTests(await import('./js/pencheck.js'))` |
+| 撮影 | 4 | `await (await import('./test/snapshottests.js')).runSnapshotTests(await import('./js/snapshot.js'))` |
 
 - Parser テストの補助は、期待したイベントと**件数まで一致**することを確かめます。また、アプリと同じくエラーが出たら実行を止めます。
   - 以前は件数を比べておらず、エラー後に余計な描画をしても合格していました。
 - 上流のテスト補助は、失敗すると例外を投げます。`Interpreter` の生成中に投げると `interpreter` が作られず、アプリ全体が動かなくなります。テストを変えたら、ページが正常に開くことも確認してください。
 - 往復変換テストは、画面に出していないワークスペース（`roundTripProgram`）で行います。ユーザーのブロックには影響しません。
 
-## Scratch Blocks（`scratch-blocks@2.1.19`）の落とし穴
+## Scratch Blocks（`scratch-blocks@2.1.19`、`vendor/` に同梱）の落とし穴
 
 Scratch Blocks 2.x は Blockly 12 を同梱した単一の ESM（`dist/main.mjs`）で、外部依存はありません。次の点はハマりどころです。
 
@@ -149,6 +159,9 @@ Scratch Blocks 2.x は Blockly 12 を同梱した単一の ESM（`dist/main.mjs`
      - 再試行しても直らなければ、正しい構文のプログラムなのでそのまま実行し、注意を表示する。
   4. 失敗したら「直前のコード＋エラー文」を返して再試行する（既定2回）。同じ誤りの繰り返しを避けるため、再試行ごとに温度を +0.3 する。
   5. 会話履歴は、成功したやり取りだけを `{request, code, applied}` で保持し、毎回「システム＋過去の依頼とコード＋今回の依頼」を送る。
+     - 送るのは直近2往復まで（`MAX_HISTORY_EXCHANGES`）。小型モデルは古いコードに引きずられるため。それとは別に、文脈長に収まらなければさらに古いものを外す。
+     - 「現在のプログラム」は、言語欄が日本語・スペイン語でも、ブロック経由で英語に変換して渡す（`translateProgram`。読めないプログラムは渡さない）。以前は英語以外だと黙って渡していなかった。
+     - 依頼と今のプログラムだけで文脈長を超える場合は、AI を呼ばずにエラーを表示する。
      - 失敗した試行や説明文は履歴に入れない。小型モデルが過去の失敗を真似るため。
      - 「現在のプログラム」は、エディタの内容が直前の AI 出力（`applied`）と違うとき、つまり人が手で直したときだけ添える（二重送信を避ける）。
      - 送信前に `fitHistory()` で「推定入力＋最大出力＋再試行の余白 350」が 4096 を超えないよう、古いやり取りから外す。
@@ -228,6 +241,14 @@ python3 -m http.server 8000
 - 背景（色15）と同じ色や白で描いて、ほとんど見えないことがありました。システムプロンプトで注意し、試し実行のチェックでも検出します（`pencheck.js` の `invisible`）。
   - 判定は、背景色とのコントラスト比（WCAG）が1.5未満かどうかです。薄い灰色の背景では、白・黄・水色・灰が該当し、オレンジ・タン（約1.6）は通ります。
 - 同じ行を繰り返す暴走が起きることがあります。今は最大トークン数（既定1024）と中止ボタンで止めています。`frequency_penalty` などは未検証です。
+
+## 2026-10-14 のレビューで対応しなかった指摘
+
+- 「新しい会話」の直後にエディタのプログラムを渡さない動き：ユーザーの依頼で入れた仕様なので、そのまま。
+- 画像モデル用プロンプトの引退ハッシュ：この欄は最初から「既定のままなら null で保存」なので、古い既定が保存されることはなく不要。
+- トークナイザーの文字列連結による O(n²) の心配：JS エンジンが連結を最適化するので、実際には問題にならない。
+- 文法制約モードのときだけ短いプロンプトにする案：文法制約は実験的機能で既定 OFF のため、見送り。
+- WebLLM のセルフホスト・import map の integrity：WebLLM は約6MBで、モデルの wasm も外部から取るため、効果が限られるので見送り。
 
 ## 既知の課題・今後の候補
 

@@ -545,5 +545,28 @@ function runParserTests(Tokenizer, Parser, i18n) {
             ]
         )
     );
+    tests.push((() => {
+        let testName = "Trigger error STEP_LIMIT_EXCEEDED for a program that runs too long";
+        let parser = new Parser();
+        parser.maxSteps = 50;
+        let draws = 0;
+        let errorCode = Parser.errors.NONE;
+        parser.raiseEvent = (name, payload) => {
+            if (name === Parser.events.turtleDrawingEvent.name) draws++;
+            if (name === Parser.events.errorEvent.name) errorCode = payload.errorCode;
+        };
+        parser.initializeParsing(new Tokenizer(i18n.English.primitiveAliases).tokenize("repeat 1000 [fd 1]"));
+        let calls = 0;
+        while (!parser.isEndOfScript() && !parser.stopParsingRequested && calls++ < 10000) {
+            parser.parsingStep();
+        }
+        let success = errorCode === Parser.errors.STEP_LIMIT_EXCEEDED && parser.stopParsingRequested && draws < 50;
+        if (success) {
+            testPassed(testName);
+        } else {
+            testFailed(`${testName}: error ${errorCode}, ${draws} draws`);
+        }
+        return success;
+    })());
     return tests.every(test => test);
 }
