@@ -1025,6 +1025,16 @@ class Turtle {
         this.drawTurtle();
         this.renderFrame();
     }
+    resetPen() {
+        // Pen settings otherwise carry over from the previous run, so a program that ended with PENUP made the next one draw nothing
+        this.state.isPenDown = this.defaults.isPenDown;
+        this.state.penColorIndex = this.defaults.penColorIndex;
+        this.state.penSize = this.defaults.penSize;
+        this.state.fontSize = this.defaults.fontSize;
+        if (!this.state.isTurtleVisible) {
+            this.execute_showturtle();
+        }
+    }
     getColor(colorIndex = 0) {
         let index = Math.trunc(colorIndex); // Expressions such as 7 / 2 can produce fractions
         if (!(index >= 0 && index < Turtle.colors.length)) {
@@ -1182,6 +1192,7 @@ class Interpreter {
     clear() {
         this.setEditor("");
         this.setStatusBar("");
+        this.turtle.resetPen();
         this.turtle.execute_clearscreen();
     }
     getLatestScriptRun() {  
@@ -1275,6 +1286,7 @@ class Interpreter {
         let script = this.editor.value;
         this.setStatusBar("");
         this.saveLatestScriptRun(script);
+        this.turtle.resetPen();
         let tokens = this.tokenizer.tokenize(script);
         this.parser.parse(tokens);
     }

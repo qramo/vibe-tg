@@ -27,9 +27,11 @@ vibe-tg : Vibe Turtle Graphics の実装メモです。次に作業する人（�
 | `js/chat.js` | ES module。Chat UI、設定、WebLLM の読み込みと生成、検証・再試行 |
 | `js/llm-worker.js` | WebLLM を Web Worker で動かすハンドラー |
 | `js/webllm.js` | WebLLM の CDN URL（ページと Worker で共有） |
+| `js/pencheck.js` | ES module。AI が書いたプログラムを描画せずに試し実行し、ペンを上げたまま図形を描こうとしていないか調べる |
 | `test/tokenizertests.js` `test/parsertests.js` | 上流由来のテスト（Parser 側は境界ケースを追加）。`Interpreter` の生成時に自動実行され、結果は console に出る |
 | `test/turtletests.js` | 色番号の範囲などタートル描画のテスト。`Interpreter` の生成時に自動実行 |
 | `test/blocktests.js` | ES module。ブロック変換の受理／拒否と、全サンプルの往復変換テスト。ブロックエディターの読み込み後に `blocks.js` から自動実行 |
+| `test/penchecktests.js` | ES module。`pencheck.js` のテスト。`chat.js` の初期化時に自動実行 |
 
 読み込み順: classic script（`test/*`、`logo.i18n.js`、`logo.js`、`site.js`）→ module（`blocks.js`、`chat.js`）。
 
@@ -72,17 +74,19 @@ module からは、classic script のトップレベル宣言（`interpreter`、
 - 定義の外の `stop` は、プログラム全体を止める（以前は「END がない」という見当違いのエラー）。ブロックの表示は「止める」。
 - 定義を呼んだ時点のブロックスタックの深さを記録し、`end` でそこまで戻す。以前は `if … [stop]` で抜けると、呼び出し側の `repeat` が1回で終わっていた。
 - 定義の外の単独の `end` は無視する（以前は TypeError）。
+- 「実行」と「画面を消去」のたびに、ペンを初期状態に戻す（`Turtle.resetPen()`：ペンを下ろす、色は黒、太さ1、文字の大きさ既定、タートル表示）。以前は前回の `pu` や色が持ち越され、`pu` で終わるプログラムの次の実行で線が描かれなかった。描いた絵と背景色は残る。
 
 ## テスト
 
-ページを開くと全テストが自動で実行され、結果が console に `TEST PASSED/FAILED` で出ます（2026-10-13 時点で計102件、全件合格）。
+ページを開くと全テストが自動で実行され、結果が console に `TEST PASSED/FAILED` で出ます（2026-10-13 時点で計120件、全件合格）。各 `run…Tests` は全件合格なら `true` を返します。
 
 | 種類 | 件数 | 手動で実行するとき（console） |
 |---|---|---|
 | Tokenizer | 26 | `runTokenizerTests(i18n)` |
 | Parser | 27 | `runParserTests(Tokenizer, Parser, i18n)` |
-| Turtle | 8 | `runTurtleTests(Turtle)` |
+| Turtle | 9 | `runTurtleTests(Turtle)` |
 | ブロック変換 | 41 | `(await import('./test/blocktests.js')).runBlockTests(await import('./js/blocks.js'))` |
+| ペン判定 | 17 | `(await import('./test/penchecktests.js')).runPenCheckTests(await import('./js/pencheck.js'))` |
 
 - Parser テストの補助は、期待したイベントと**件数まで一致**することを確かめます。また、アプリと同じくエラーが出たら実行を止めます。
   - 以前は件数を比べておらず、エラー後に余計な描画をしても合格していました。
@@ -120,7 +124,10 @@ Scratch Blocks 2.x は Blockly 12 を同梱した単一の ESM（`dist/main.mjs`
 - 生成の流れ（`handleRequest`）:
   1. システムプロンプト ＋ 依頼を送る。設定がオンで言語が英語なら、現在のプログラムも添える。
   2. 返答から最後のコードブロックを抜き出し、`;` コメントを除去する。
-  3. `checkProgram()` で検証する。
+  3. `checkProgram()` で検証する。通ったら `findPenUpProblem()`（`js/pencheck.js`）で描画せずに試し実行し、ペンの上げ忘れを調べる。
+     - 判定：線が1本も描かれない（`nothing`）、またはペンを上げたまま4回以上続けて動く（`shape`。移動は普通3回以内なので）。`label` は上げたままでも描かれるので区切りとして扱う。
+     - 実行時エラーや2万ステップを超えるものは判定しない（本番の実行に任せる）。Parser の `raiseEvent` をインスタンスで差し替えて、本物のキャンバスには描かせない。
+     - 再試行しても直らなければ、正しい構文のプログラムなのでそのまま実行し、注意を表示する。
   4. 失敗したら「直前のコード＋エラー文」を返して再試行する（既定2回）。同じ誤りの繰り返しを避けるため、再試行ごとに温度を +0.3 する。
   5. 会話履歴は、成功したやり取りだけを `{request, code, applied}` で保持し、毎回「システム＋過去の依頼とコード＋今回の依頼」を送る。
      - 失敗した試行や説明文は履歴に入れない。小型モデルが過去の失敗を真似るため。

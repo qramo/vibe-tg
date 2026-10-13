@@ -1,6 +1,8 @@
 // AI Chat: an in-browser LLM (WebLLM) writes LOGO programs, which are checked, put into the editor and run.
 import { checkProgram, applyProgram, selectView } from './blocks.js';
 import { WEBLLM_URL } from './webllm.js';
+import { findPenUpProblem } from './pencheck.js';
+import { runPenCheckTests } from '../test/penchecktests.js';
 
 const SETTINGS_KEY = 'vibe-tg-chat-settings';
 
@@ -513,6 +515,18 @@ function onSuccess(request, code) {
   return applied;
 }
 
+function penProblemNote(problem) {
+  return problem.kind === 'nothing'
+    ? 'ペンが上がったまま（pu）なので、線が1本も描かれません'
+    : `ペンが上がったまま（pu）で${problem.moves}回続けて動いていて、その部分の線が描かれません`;
+}
+
+function penProblemFeedback(problem) {
+  return problem.kind === 'nothing'
+    ? 'This program draws nothing: the pen is up (pu) every time the turtle moves. After moving to a starting point with pu, put pd before drawing.'
+    : `Part of the picture is not drawn: the turtle moves ${problem.moves} times in a row with the pen up (pu), so that shape is invisible. After moving to the start of each part with pu, put pd before drawing it.`;
+}
+
 function onFailure(code, error) {
   addNote(`エラーが残りました：${error}`, 'error');
   addActions([{
@@ -536,19 +550,30 @@ async function handleRequest(request) {
       if (interrupted) return;
       const code = extractCode(reply);
       const error = checkProgram(code);
-      if (!error) {
+      const penProblem = error ? null : findPenUpProblem(code);
+      if (!error && !penProblem) {
         onSuccess(request, code);
         return;
       }
       if (attempt === settings.maxRetries) {
-        onFailure(code, error);
+        if (error) {
+          onFailure(code, error);
+        } else {
+          // The program is valid, so show it anyway rather than throwing the work away.
+          onSuccess(request, code);
+          addNote(`注意：${penProblemNote(penProblem)}`, 'warn');
+        }
         return;
       }
-      addNote(`エラー：${error} → AIに修正を頼みます（${attempt + 1}/${settings.maxRetries}）`, 'warn');
+      const note = error ? `エラー：${error}` : penProblemNote(penProblem);
+      addNote(`${note} → AIに修正を頼みます（${attempt + 1}/${settings.maxRetries}）`, 'warn');
+      const feedback = error
+        ? `That program has an error: ${error}\nFix it. Use only the commands in the rules, and reply with the complete corrected program in one code block.`
+        : `${penProblemFeedback(penProblem)}\nReply with the complete corrected program in one code block.`;
       messages = [
         ...base,
         { role: 'assistant', content: `\`\`\`logo\n${code}\n\`\`\`` },
-        { role: 'user', content: `That program has an error: ${error}\nFix it. Use only the commands in the rules, and reply with the complete corrected program in one code block.` }
+        { role: 'user', content: feedback }
       ];
     }
   } catch (error) {
@@ -576,6 +601,7 @@ function submit() {
 // ---------- Init ----------
 
 function init() {
+  runPenCheckTests({ findPenUpProblem });
   setupSettings();
   loadButton.addEventListener('click', loadModel);
   $('chat-form').addEventListener('submit', event => {

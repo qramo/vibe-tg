@@ -40,6 +40,29 @@ function runTurtleTests(Turtle) {
         return success;
     };
 
+    let assertResetPen = (testName = "") => {
+        let turtle = createTurtle();
+        turtle.execute_penup();
+        turtle.execute_setpencolor(4);
+        turtle.execute_setpensize(5);
+        turtle.execute_setlabelheight(40);
+        turtle.execute_hideturtle();
+        turtle.resetPen();
+        let state = turtle.state;
+        let defaults = turtle.defaults;
+        let success = state.isPenDown === defaults.isPenDown
+            && state.penColorIndex === defaults.penColorIndex
+            && state.penSize === defaults.penSize
+            && state.fontSize === defaults.fontSize
+            && state.isTurtleVisible === defaults.isTurtleVisible;
+        if (success) {
+            testPassed(testName);
+        } else {
+            testFailed(`${testName}: ${JSON.stringify(state)}`);
+        }
+        return success;
+    };
+
     let lastColorIndex = Turtle.colors.length - 1;
     let tests = [];
 
@@ -51,6 +74,7 @@ function runTurtleTests(Turtle) {
     tests.push(assertColor("A color that is not a number falls back to black", NaN, 0));
     tests.push(assertDrawsWithPenColor(`Drawing with color ${lastColorIndex + 1} does not crash`, lastColorIndex + 1));
     tests.push(assertDrawsWithPenColor("Drawing with a fractional color does not crash", 7 / 2));
+    tests.push(assertResetPen("Resetting the pen puts it down with the default color, size, text size and a visible turtle"));
 
     return tests.every(test => test);
 }

@@ -22,8 +22,9 @@
 - `[` が閉じられていないプログラムをエラーにした（エラー `CODEBLOCK_EXPECTED_CLOSING_BRACKET` と英語・スペイン語のメッセージを追加）。
 - 手続きの外の `STOP` でプログラム全体を止めるようにした。
 - 手続き内の `IF`/`REPEAT` から `STOP` で抜けたとき、呼び出し側の `REPEAT` が壊れないようにした。
+- 実行のたびに（「画面を消去」でも）ペンを初期状態（下ろす・黒・太さ1・既定の文字サイズ・タートル表示）に戻すようにした。前回の実行の `PENUP` などが持ち越されないようにするため。
 
-`test/parsertests.js` には、これらの境界ケースのテストを追加しました。また、描画イベントの件数も比べ、エラーで実行を止めるようにテスト補助を変えています。`test/turtletests.js` と `test/blocktests.js` は、このプロジェクトで追加したテストです。
+`test/parsertests.js` には、これらの境界ケースのテストを追加しました。また、描画イベントの件数も比べ、エラーで実行を止めるようにテスト補助を変えています。`test/turtletests.js`、`test/blocktests.js`、`test/penchecktests.js` は、このプロジェクトで追加したテストです。
 
 ## Scratch Blocks
 
