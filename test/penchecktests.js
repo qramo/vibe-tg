@@ -40,6 +40,10 @@ export function runPenCheckTests({ findPenUpProblem }) {
     tests.push(assertProblem("Cyan lines on an aqua background are invisible", "setbg 11 setpc 3 fd 50", "invisible"));
     tests.push(assertProblem("Some visible lines are fine", "setpc 15 fd 50 setpc 0 fd 50", null));
     tests.push(assertProblem("Grey lines on a dark background are fine", "setbg 0 setpc 15 fd 50", null));
+    tests.push(assertProblem("White lines on the default background are hard to see", "cs setpc 7 repeat 4 [fd 100 rt 90]", "invisible"));
+    tests.push(assertProblem("Yellow lines on the default background are hard to see", "setpc 6 fd 50", "invisible"));
+    tests.push(assertProblem("Orange lines on the default background are fine", "setpc 14 fd 50", null));
+    tests.push(assertProblem("White lines on a black background are fine", "setbg 0 setpc 7 fd 50", null));
     tests.push(assertProblem("A whole drawing with the pen up draws nothing", "cs pu bk 100 repeat 4 [fd 50 rt 90] pu home", "nothing"));
     tests.push(assertProblem("A shape drawn after a jump without pd is caught", "fd 50 pu fd 20 rt 90 repeat 4 [fd 30 rt 90] pd fd 10", "shape"));
     tests.push(assertProblem("A procedure shape drawn with the pen up is caught", lines([

@@ -50,7 +50,7 @@ Rules:
 - Names use English letters only.
 - There are no comments, no variables (make), no setxy or setpos, no arc or circle commands.
 - Colors: 0 black, 1 blue, 2 green, 3 cyan, 4 red, 5 magenta, 6 yellow, 7 white, 8 brown, 9 tan, 10 dark green, 11 aqua, 12 salmon, 13 purple, 14 orange, 15 grey.
-- The background is 15 (light grey), so lines drawn with 15 are invisible and 7 (white) is hard to see. Use darker colors for lines.
+- The background is 15 (light grey), so lines in 15 (grey), 7 (white), 6 (yellow), 3 (cyan) or 11 (aqua) are very hard to see. Use darker colors for lines.
 - The turtle starts at the center facing up. The canvas reaches about 270 steps from the center in every direction.
 
 How to draw well:
@@ -118,7 +118,7 @@ const LOGO_GRAMMAR = [
 
 // FNV-1a hashes of earlier default system prompts. A saved copy of one of them is treated as "use the default",
 // so people who once pressed Save still get prompt improvements. Add the old hash here whenever the default changes.
-const RETIRED_DEFAULT_PROMPTS = ['daf0cfbf', 'd7d65135', '02a20e71'];
+const RETIRED_DEFAULT_PROMPTS = ['daf0cfbf', 'd7d65135', '02a20e71', '8128ff8e'];
 
 function promptHash(text) {
   let hash = 0x811c9dc5;
@@ -130,15 +130,13 @@ function promptHash(text) {
 }
 
 // The word "turtle" is kept out on purpose: told it was a "turtle graphics" picture, the model described a sea turtle.
-const DEFAULT_VISION_PROMPT = `You check pictures made by a simple drawing program for children.
+// The model is not told the request either; given it, it simply repeated the request ("a house") for a lone square.
+const DEFAULT_VISION_PROMPT = `You describe pictures made by a simple drawing program for children.
 The program moves a pen in straight lines and turns, so every picture is a plain line drawing on a flat background:
 straight segments, polygons, and many-sided polygons that stand for circles.
 There are no animals, characters or objects in the picture unless the lines themselves clearly form them.
-Look only at the lines and shapes. Ignore any written words, and do not imagine colors, faces or details that are not drawn.
-
-Reply in exactly two lines:
-Line 1: the shapes you see, in a few words (for example "a square with a triangle on top").
-Line 2: "OK" if the shapes clearly form what was asked. Otherwise "FIX:" followed by at most three short, concrete problems (a missing part, a wrong position or a wrong size).`;
+Describe only what the lines show: the shapes, how many there are, and where they are relative to each other.
+Ignore any written words, and do not imagine colors, faces or details that are not drawn. Answer in one or two short sentences.`;
 
 const DEFAULT_SETTINGS = {
   model: 'Qwen3-4B-q4f16_1-MLC',
@@ -657,7 +655,7 @@ function onSuccess(request, code) {
 }
 
 function penProblemNote(problem) {
-  if (problem.kind === 'invisible') return `線がすべて背景と同じ色（${problem.color}）なので、何も見えません`;
+  if (problem.kind === 'invisible') return `線がすべて背景（${problem.background}）と見分けにくい色（${problem.color}）なので、ほとんど見えません`;
   return problem.kind === 'nothing'
     ? 'ペンが上がったまま（pu）なので、線が1本も描かれません'
     : `ペンが上がったまま（pu）で${problem.moves}回続けて動いていて、その部分の線が描かれません`;
@@ -665,7 +663,7 @@ function penProblemNote(problem) {
 
 function penProblemFeedback(problem) {
   if (problem.kind === 'invisible') {
-    return `Every line is drawn in color ${problem.color}, the same as the background, so nothing can be seen. Use another pen color (setpc), such as 0 black or 1 blue.`;
+    return `Every line is drawn in color ${problem.color}, which is very hard to see on the background (color ${problem.background}). Use a darker pen color (setpc), such as 0 black, 1 blue, 2 green, 4 red or 13 purple.`;
   }
   return problem.kind === 'nothing'
     ? 'This program draws nothing: the pen is up (pu) every time the turtle moves. After moving to a starting point with pu, put pd before drawing.'
@@ -688,19 +686,18 @@ function addSnapshot(image) {
   return text;
 }
 
-async function askVision(request, image) {
+async function describeDrawing(image) {
   const reply = await engine.chat.completions.create({
     model: VISION_MODEL.id,
     temperature: 0.2,
-    max_tokens: 160,
+    max_tokens: 120,
     messages: [
       { role: 'system', content: settings.visionPrompt },
       {
         role: 'user',
         content: [
           { type: 'image_url', image_url: { url: image } },
-          // Phi-3.5-vision tends to answer only the first line unless the format is repeated next to the image.
-          { type: 'text', text: `The request was: "${request}" (it may be in Japanese). Reply in the two-line format: the shapes you see, then OK or FIX:.` }
+          { type: 'text', text: 'Describe the shapes in this line drawing.' }
         ]
       }
     ]
@@ -708,32 +705,50 @@ async function askVision(request, image) {
   return (reply.choices[0]?.message?.content ?? '').trim();
 }
 
-function parseVerdict(text) {
-  const lines = text.split('\n').map(line => line.trim()).filter(Boolean);
-  const fixLine = lines.find(line => /^(line 2:\s*)?FIX:/i.test(line));
-  const description = (lines[0] ?? '').replace(/^line 1:\s*/i, '');
-  if (fixLine) return { ok: false, description, problems: fixLine.replace(/^(line 2:\s*)?FIX:\s*/i, '') };
-  return { ok: lines.some(line => /^(line 2:\s*)?OK\b/i.test(line)), description, problems: '' };
+// The code model reasons better in text than the small vision model, so it compares the description with the request.
+async function judgeDrawing(request, description) {
+  const reply = await engine.chat.completions.create({
+    model: loadedModel,
+    temperature: 0,
+    max_tokens: 120,
+    ...(/^Qwen3/.test(loadedModel) ? { extra_body: { enable_thinking: false } } : {}),
+    messages: [
+      { role: 'system', content: 'You check whether a line drawing matches a drawing request, using a description of the drawing.' },
+      {
+        role: 'user',
+        content: `Request: "${request}"\nDescription of the drawing: "${description}"\n` +
+          'Does the drawing contain the main parts of what was requested? Reply with one line: "OK", or "FIX:" followed by at most three short, concrete things to add or change.'
+      }
+    ]
+  });
+  return visibleText(reply.choices[0]?.message?.content ?? '');
+}
+
+function parseJudgement(text) {
+  const line = text.split('\n').map(part => part.trim()).find(Boolean) ?? '';
+  if (/^OK\b/i.test(line)) return { ok: true, problems: '' };
+  return { ok: false, problems: line.replace(/^FIX:\s*/i, '') };
 }
 
 /** Shows the finished drawing to the vision model and, if it finds problems, lets the code model fix them once. */
 async function reviewWithVision(request, code, base) {
   const status = addSnapshot(renderSnapshot(code));
-  const verdict = parseVerdict(await askVision(request, status.previousElementSibling.src));
+  const description = await describeDrawing(status.previousElementSibling.src);
   if (interrupted) return;
-  const seen = verdict.description ? `見えたもの：${verdict.description}\n` : '';
-  if (verdict.ok && !verdict.problems) {
-    status.textContent = `${seen}画像モデル：依頼どおりに見えます。`;
+  status.textContent = `見えたもの（画像モデル）：${description}\n判定中…`;
+  const verdict = parseJudgement(await judgeDrawing(request, description));
+  if (interrupted) return;
+  if (verdict.ok) {
+    status.textContent = `見えたもの（画像モデル）：${description}\n判定：依頼どおりに見えます。`;
     return;
   }
-  // Only a clear OK passes; an answer without OK or FIX still means the drawing did not look right.
-  const problems = verdict.problems || `It does not clearly look like what was asked. What the drawing shows: ${verdict.description}`;
-  status.textContent = verdict.problems ? `${seen}画像モデルの指摘：${problems}` : `${seen}画像モデル：依頼どおりとは言えないようです。`;
+  const problems = verdict.problems || 'It does not look like what was asked.';
+  status.textContent = `見えたもの（画像モデル）：${description}\n判定：${problems}`;
   addNote('指摘をもとに、AIに1回だけ直してもらいます。');
   const messages = [
     ...base,
     { role: 'assistant', content: `\`\`\`logo\n${code}\n\`\`\`` },
-    { role: 'user', content: `I looked at the drawing this program makes. Problems: ${problems}\nImprove the program to fix them. Reply with the complete program in one code block.` }
+    { role: 'user', content: `I looked at the drawing this program makes. It shows: ${description}\nProblems: ${problems}\nImprove the program to fix them. Reply with the complete program in one code block.` }
   ];
   const reply = await generate(messages, addMessage('assistant', '…'), 0);
   if (interrupted) return;

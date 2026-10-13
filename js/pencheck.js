@@ -1,26 +1,37 @@
 // Runs a LOGO program without drawing anything, to catch shapes the turtle "draws" with the pen up.
 // Small models often lift the pen to move to a part and forget pd before drawing it.
-// Tokenizer, Parser and i18n are the globals defined by js/logo.js and js/logo.i18n.js.
+// Tokenizer, Parser, Turtle and i18n are the globals defined by js/logo.js and js/logo.i18n.js.
 
 const MAX_STEPS = 20000;
 // Getting to the start of a part takes a few moves; more moves than this in one pen-up stretch means a shape was drawn with the pen up.
 const MAX_JUMP_MOVES = 3;
 
-// Colors that look the same on screen (3 cyan and 11 aqua share #00FFFF), so a line in one is invisible on the other.
-const SAME_COLOR = { 3: 11, 11: 3 };
 const DEFAULT_BACKGROUND = 15;
 const DEFAULT_PEN_COLOR = 0;
+// WCAG contrast ratio below which a line is hard to see. On the default light grey this catches white, yellow, cyan,
+// aqua and grey, while orange and tan (about 1.6) still pass.
+const MIN_CONTRAST = 1.5;
 
-function sameColor(a, b) {
-  const x = Math.trunc(a);
-  const y = Math.trunc(b);
-  return x === y || SAME_COLOR[x] === y;
+function luminance(hex) {
+  const [r, g, b] = [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16) / 255)
+    .map(v => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4));
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
+function colorOf(index) {
+  const i = Math.trunc(index);
+  return (Turtle.colors[i] ?? Turtle.colors[0]).color;
+}
+
+function hardToSee(penColor, background) {
+  const [light, dark] = [luminance(colorOf(penColor)), luminance(colorOf(background))].sort((a, b) => b - a);
+  return (light + 0.05) / (dark + 0.05) < MIN_CONTRAST;
 }
 
 /**
  * Returns null when the pen use looks right. Otherwise returns { kind, moves, color }:
  * kind 'nothing' when no line is drawn at all, 'shape' when a long run of moves happens with the pen up,
- * 'invisible' when every line is drawn in the background color.
+ * 'invisible' when every line is drawn in a color that is hard to see on the background.
  * Programs that hit a runtime error or run too long are not judged, since the real run will show those.
  */
 export function findPenUpProblem(code) {
@@ -62,7 +73,7 @@ export function findPenUpProblem(code) {
       case primitives.BACK:
         if (penDown) {
           drawn++;
-          if (!sameColor(penColor, background)) visible++;
+          if (!hardToSee(penColor, background)) visible++;
         } else {
           stretch++;
           longest = Math.max(longest, stretch);
@@ -71,7 +82,7 @@ export function findPenUpProblem(code) {
       case primitives.LABEL:
         // Labels are drawn with the pen up too, so moves between labels are deliberate
         drawn++;
-        if (!sameColor(penColor, background)) visible++;
+        if (!hardToSee(penColor, background)) visible++;
         stretch = 0;
         break;
     }
@@ -86,6 +97,6 @@ export function findPenUpProblem(code) {
   if (failed || steps >= MAX_STEPS) return null;
   if (drawn === 0 && longest > 0) return { kind: 'nothing', moves: longest };
   if (longest > MAX_JUMP_MOVES) return { kind: 'shape', moves: longest };
-  if (drawn > 0 && visible === 0) return { kind: 'invisible', color: Math.trunc(penColor) };
+  if (drawn > 0 && visible === 0) return { kind: 'invisible', color: Math.trunc(penColor), background: Math.trunc(background) };
   return null;
 }
