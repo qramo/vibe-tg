@@ -305,6 +305,17 @@ kbd {
 .chat-note.warn { color: #8a5a14; }
 .chat-note.error { color: #9b2c1f; }
 .chat-actions, .chat-suggestions { display: flex; flex-wrap: wrap; gap: 6px; }
+.chat-vision {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px;
+  border: 1px dashed #c9b6ec;
+  border-radius: 10px;
+  background: #faf7ff;
+}
+.chat-vision img { flex: 0 0 auto; width: 72px; height: 96px; border-radius: 6px; }
+.chat-vision p { margin: 0; color: #4a2f7a; font-size: 12px; line-height: 1.55; white-space: pre-wrap; }
 .chat-chip { border-radius: 999px; }
 .chat-form {
   display: flex;
@@ -404,7 +415,8 @@ kbd {
   white-space: nowrap;
 }
 .settings-checks { display: grid; gap: 6px; }
-.settings-checks label { display: flex; align-items: center; gap: 8px; }
+.settings-checks label { display: flex; align-items: flex-start; gap: 8px; line-height: 1.5; }
+.settings-checks input { margin-top: 3px; }
 .settings-prompt-heading {
   display: flex;
   align-items: center;

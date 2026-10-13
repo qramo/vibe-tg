@@ -41,4 +41,4 @@
 
 AI Chat（`js/chat.js`、`js/llm-worker.js`）は [mlc-ai/web-llm](https://github.com/mlc-ai/web-llm)（Apache License 2.0）を利用しています。リポジトリには同梱せず、実行時に jsDelivr から固定バージョン（`js/webllm.js`）を読み込みます。
 
-モデルの重みは、利用者が「モデルを読み込む」を押したときに Hugging Face（mlc-ai）から利用者のブラウザーへ直接ダウンロードされます。本リポジトリでは再配布していません。各モデルにはそれぞれのライセンスがあります（例：Qwen は Apache 2.0、Phi-4-mini は MIT、Llama 3.2 は Llama 3.2 Community License）。
+モデルの重みは、利用者が「モデルを読み込む」を押したときに Hugging Face（mlc-ai）から利用者のブラウザーへ直接ダウンロードされます。本リポジトリでは再配布していません。各モデルにはそれぞれのライセンスがあります（例：Qwen は Apache 2.0、Phi-4-mini と Phi-3.5-vision は MIT、Llama 3.2 は Llama 3.2 Community License）。

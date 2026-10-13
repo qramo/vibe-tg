@@ -27,10 +27,12 @@ vibe-tg : Vibe Turtle Graphics の実装メモです。次に作業する人（�
 | `js/chat.js` | ES module。Chat UI、設定、WebLLM の読み込みと生成、検証・再試行 |
 | `js/llm-worker.js` | WebLLM を Web Worker で動かすハンドラー |
 | `js/webllm.js` | WebLLM の CDN URL（ページと Worker で共有） |
+| `js/snapshot.js` | ES module。プログラムの完成した絵を、画面外でアニメーションなしに描き、3:4 の JPEG にする（画像モデル用） |
 | `js/pencheck.js` | ES module。AI が書いたプログラムを描画せずに試し実行し、ペンを上げたまま図形を描こうとしていないか調べる |
 | `test/tokenizertests.js` `test/parsertests.js` | 上流由来のテスト（Parser 側は境界ケースを追加）。`Interpreter` の生成時に自動実行され、結果は console に出る |
 | `test/turtletests.js` | 色番号の範囲などタートル描画のテスト。`Interpreter` の生成時に自動実行 |
 | `test/blocktests.js` | ES module。ブロック変換の受理／拒否と、全サンプルの往復変換テスト。ブロックエディターの読み込み後に `blocks.js` から自動実行 |
+| `test/snapshottests.js` | ES module。`snapshot.js` のテスト。`chat.js` の初期化時に自動実行 |
 | `test/penchecktests.js` | ES module。`pencheck.js` のテスト。`chat.js` の初期化時に自動実行 |
 
 読み込み順: classic script（`test/*`、`logo.i18n.js`、`logo.js`、`site.js`）→ module（`blocks.js`、`chat.js`）。
@@ -134,6 +136,7 @@ Scratch Blocks 2.x は Blockly 12 を同梱した単一の ESM（`dist/main.mjs`
     - メモリ8GB → Qwen3.5 2B（小型で最新世代）
     - 16GB → Qwen3 4B（4B級で軽く、検証済み・既定）
     - 24GB〜 → Qwen3.5 9B（最新・最大。VRAM 約6.4GB、ダウンロード約5.1GB、文脈長 4096）
+  - 設定ダイアログの保存は、画面にない設定（`cacheBackend` など）を残すために `{ ...settings, … }` で上書きする。以前は保存のたびに保存先が既定に戻っていた。
 - Worker（`llm-worker.js`）は WebLLM を動的 import するので、読み込み完了前に届いたメッセージをバッファしています。
   - トップレベル await で書くと、最初の `reload` メッセージを取りこぼす恐れがあります。
 - Qwen3 / Qwen3.5 は `extra_body.enable_thinking = false` で思考モードを切っています。出力に `<think>` が混ざっても表示前に除去します。
@@ -150,6 +153,17 @@ Scratch Blocks 2.x は Blockly 12 を同梱した単一の ESM（`dist/main.mjs`
      - 「現在のプログラム」は、エディタの内容が直前の AI 出力（`applied`）と違うとき、つまり人が手で直したときだけ添える（二重送信を避ける）。
      - 送信前に `fitHistory()` で「推定入力＋最大出力＋再試行の余白 350」が 4096 を超えないよう、古いやり取りから外す。
      - 「新しい会話」ボタンで履歴と表示を消す。エディタのプログラムは残すが、その時点の内容（`programAtNewSession`）は、手で直されるまで AI に渡さない（前の絵を覚えているように見えるのを防ぐ）。履歴はメモリーにだけ持ち、再読み込みで消える。
+- **画像モデルによる見直し（設定「描いた絵のスクリーンショットを画像モデルに見せて…」、既定 OFF）**:
+  - オンのときは、コード用モデルと Phi-3.5-vision（`VISION_MODEL`。WebLLM 0.2.85 で唯一の画像対応モデル。VRAM 約4GB、ダウンロード約2.8GB）を、1つのエンジンにまとめて読み込みます（`reload([code, vision])`）。
+    - 2つ以上読み込んだときは、リクエストに `model` が必須になるので、コード用の生成でも常に指定しています。
+  - 流れ（`reviewWithVision`）:
+    1. コードが検査を通る（またはペン注意つきで採用される）。
+    2. `renderSnapshot()` で完成図を撮る。
+    3. 画像モデルに「線と形を一言で説明（文字は無視）→ 依頼どおりなら OK、違えば FIX: 問題点」と聞く。
+    4. 明確な `OK` 以外なら、問題点（なければ見えたものの説明）を添えて、コード用モデルに1回だけ直させる。
+    5. 直したコードが検査を通れば差し替えて実行し、履歴の最後も差し替える。
+  - 画像サイズの制約：WebLLM は Phi-3.5-vision の画像を、縦横比に応じて最大16枚の 336px タイルに分けます。正方形だと16枚・約2,509トークンになり、モデルの prefill チャンク（2,048、ライブラリに組み込み済み）を超えて `PrefillChunkSizeSmallerThanImageError` になります。3:4 の縦長だと12枚・約1,933トークンで収まるので、`snapshot.js` は正方形の絵の上下に背景色を足して 336×448 にしています。
+  - 判定の質：Phi-3.5-vision は判定が甘く、描かれていないもの（煙突など）を説明することがあります。ラベルの文字（"HOUSE" など）を読んで合格にしたため、「文字は無視」「まず説明」と聞き方を工夫しています。見本の星を「五芒星」と正しく見抜き、指摘から直させるところまでは確認済みです。
 - **文脈ゲージ**: 内訳は「指示文・履歴・依頼と今のプログラム・出力用の枠」です。
   - 推定は文字数ベースで、ASCII は 3.5 文字＝1トークン、それ以外は 1 文字＝1トークン、1メッセージあたり +8 として計算します。
   - 生成のたびに、WebLLM が返す実際の `usage.prompt_tokens`（`stream_options.include_usage`）との比で倍率 `tokenScale` を補正します。補正後は実測とおおむね数%以内で一致しました。

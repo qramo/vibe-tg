@@ -2,6 +2,8 @@
 import { checkProgram, applyProgram, selectView } from './blocks.js';
 import { WEBLLM_URL } from './webllm.js';
 import { findPenUpProblem } from './pencheck.js';
+import { renderSnapshot } from './snapshot.js';
+import { runSnapshotTests } from '../test/snapshottests.js';
 import { runPenCheckTests } from '../test/penchecktests.js';
 
 const SETTINGS_KEY = 'vibe-tg-chat-settings';
@@ -135,6 +137,7 @@ const DEFAULT_SETTINGS = {
   grammar: false,
   includeCode: true,
   autoRun: true,
+  useVision: false,
   systemPrompt: DEFAULT_SYSTEM_PROMPT,
   // Where WebLLM keeps downloaded models: the Cache API first, OPFS after a Cache API failure.
   cacheBackend: 'cache'
@@ -168,6 +171,7 @@ let settings = loadSettings();
 let worker = null;
 let engine = null;
 let loadedModel = null;
+let visionLoaded = false;
 let loading = false;
 let generating = false;
 let interrupted = false;
@@ -208,6 +212,9 @@ function clampNumber(value, min, max, fallback) {
   const number = Number(value);
   return Number.isFinite(number) ? Math.min(max, Math.max(min, number)) : fallback;
 }
+
+// The only image-reading model in WebLLM 0.2.85. It looks at the finished drawing; the code model above still writes the program.
+const VISION_MODEL = { id: 'Phi-3.5-vision-instruct-q4f16_1-MLC', label: 'Phi-3.5-vision', vram: 4.0 };
 
 // Recommended models first, in order of device memory; the rest keep their order.
 const RECOMMENDATION_ORDER = ['メモリ8GB', 'メモリ16GB', 'メモリ24GB〜'];
@@ -280,6 +287,7 @@ function openSettings() {
   $('setting-grammar').checked = settings.grammar;
   $('setting-include-code').checked = settings.includeCode;
   $('setting-auto-run').checked = settings.autoRun;
+  $('setting-vision').checked = settings.useVision;
   $('setting-system-prompt').value = settings.systemPrompt;
   dialog.showModal();
 }
@@ -290,7 +298,9 @@ function setupSettings() {
   $('setting-delete-model').addEventListener('click', deleteSelectedModel);
   $('setting-reset-prompt').addEventListener('click', () => { $('setting-system-prompt').value = DEFAULT_SYSTEM_PROMPT; });
   $('chat-settings-form').addEventListener('submit', () => {
+    // Keep settings the dialog does not show (such as cacheBackend).
     settings = {
+      ...settings,
       model: selectedModelId(),
       temperature: clampNumber($('setting-temperature').value, 0, 1.5, DEFAULT_SETTINGS.temperature),
       maxRetries: Math.round(clampNumber($('setting-retries').value, 0, 5, DEFAULT_SETTINGS.maxRetries)),
@@ -298,6 +308,7 @@ function setupSettings() {
       grammar: $('setting-grammar').checked,
       includeCode: $('setting-include-code').checked,
       autoRun: $('setting-auto-run').checked,
+      useVision: $('setting-vision').checked,
       systemPrompt: $('setting-system-prompt').value.trim() || DEFAULT_SYSTEM_PROMPT
     };
     saveSettings();
@@ -307,12 +318,18 @@ function setupSettings() {
 
 // ---------- UI ----------
 
+function isReady() {
+  return Boolean(engine) && loadedModel === settings.model && (!settings.useVision || visionLoaded);
+}
+
 function updateUi() {
   const info = modelInfo(settings.model);
-  const ready = engine && loadedModel === settings.model;
-  if (loading) modelStatus.textContent = `${info.label} を読み込み中…`;
-  else if (ready) modelStatus.textContent = `${info.label}：準備完了`;
-  else modelStatus.textContent = `${info.label}：未読み込み（VRAM 約${info.vram}GB）`;
+  const ready = isReady();
+  const label = settings.useVision ? `${info.label}＋画像モデル` : info.label;
+  const vram = Math.round((info.vram + (settings.useVision ? VISION_MODEL.vram : 0)) * 10) / 10;
+  if (loading) modelStatus.textContent = `${label} を読み込み中…`;
+  else if (ready) modelStatus.textContent = `${label}：準備完了`;
+  else modelStatus.textContent = `${label}：未読み込み（VRAM 約${vram}GB）`;
   loadButton.hidden = Boolean(ready);
   loadButton.disabled = loading || generating || !navigator.gpu;
   loadButton.textContent = loadedModel ? 'このモデルに切り替える' : 'モデルを読み込む';
@@ -480,24 +497,29 @@ async function loadModel() {
     progressText.textContent = `${Math.round(report.progress * 100)}% ${report.text}`;
   };
   let retryWithOpfs = false;
+  const models = settings.useVision ? [settings.model, VISION_MODEL.id] : [settings.model];
   try {
     const webllm = await import(WEBLLM_URL);
     if (!engine) {
       worker = new Worker(new URL('./llm-worker.js', import.meta.url), { type: 'module' });
-      engine = await webllm.CreateWebWorkerMLCEngine(worker, settings.model, { initProgressCallback: onProgress, appConfig: appConfig(webllm) });
+      engine = await webllm.CreateWebWorkerMLCEngine(worker, models, { initProgressCallback: onProgress, appConfig: appConfig(webllm) });
     } else {
       engine.setInitProgressCallback(onProgress);
       engine.setAppConfig(appConfig(webllm));
-      await engine.reload(settings.model);
+      await engine.reload(models);
     }
     loadedModel = settings.model;
+    visionLoaded = settings.useVision;
     tokenScale = 1;
     lastUsage = null;
-    addNote(`${modelInfo(loadedModel).label} の準備ができました。`);
+    addNote(visionLoaded
+      ? `${modelInfo(loadedModel).label} と画像モデル（${VISION_MODEL.label}）の準備ができました。`
+      : `${modelInfo(loadedModel).label} の準備ができました。`);
     progress.hidden = true;
   } catch (error) {
     console.error(error);
     loadedModel = null;
+    visionLoaded = false;
     if (!engine && worker) {
       worker.terminate();
       worker = null;
@@ -536,6 +558,8 @@ function visibleText(text) {
 async function generate(messages, bubble, attempt) {
   const isQwen = /^Qwen3/.test(loadedModel);
   const request = {
+    // Required once two models are loaded; it names the code model.
+    model: loadedModel,
     messages,
     stream: true,
     // At a low temperature a retry tends to reproduce the same broken program, so loosen it a little each time.
@@ -626,6 +650,87 @@ function penProblemFeedback(problem) {
     : `Part of the picture is not drawn: the turtle moves ${problem.moves} times in a row with the pen up (pu), so that shape is invisible. After moving to the start of each part with pu, put pd before drawing it.`;
 }
 
+// ---------- Vision review ----------
+
+function addSnapshot(image) {
+  const box = document.createElement('div');
+  box.className = 'chat-vision';
+  const img = document.createElement('img');
+  img.src = image;
+  img.alt = '画像モデルに見せた絵';
+  const text = document.createElement('p');
+  text.textContent = '画像モデルが絵を確認しています…';
+  box.append(img, text);
+  log.append(box);
+  scrollLog();
+  return text;
+}
+
+async function askVision(request, image) {
+  const reply = await engine.chat.completions.create({
+    model: VISION_MODEL.id,
+    temperature: 0.2,
+    max_tokens: 160,
+    messages: [{
+      role: 'user',
+      content: [
+        { type: 'image_url', image_url: { url: image } },
+        {
+          type: 'text',
+          // Asking for a description first, and to ignore text, keeps the model from approving a drawing just because a label names the object.
+          text: `This image is a simple line drawing made by a turtle graphics program. The user asked for: "${request}" (the request may be in Japanese).\n` +
+            'Line 1: describe the lines and shapes you see in a few words. Ignore any written words.\n' +
+            'Line 2: write "OK" only if the shapes clearly form what was asked. Otherwise write "FIX:" followed by at most three short, concrete problems ' +
+            '(for example a missing part, a wrong position or a wrong size).'
+        }
+      ]
+    }]
+  });
+  return (reply.choices[0]?.message?.content ?? '').trim();
+}
+
+function parseVerdict(text) {
+  const lines = text.split('\n').map(line => line.trim()).filter(Boolean);
+  const fixLine = lines.find(line => /^(line 2:\s*)?FIX:/i.test(line));
+  const description = (lines[0] ?? '').replace(/^line 1:\s*/i, '');
+  if (fixLine) return { ok: false, description, problems: fixLine.replace(/^(line 2:\s*)?FIX:\s*/i, '') };
+  return { ok: lines.some(line => /^(line 2:\s*)?OK\b/i.test(line)), description, problems: '' };
+}
+
+/** Shows the finished drawing to the vision model and, if it finds problems, lets the code model fix them once. */
+async function reviewWithVision(request, code, base) {
+  const status = addSnapshot(renderSnapshot(code));
+  const verdict = parseVerdict(await askVision(request, status.previousElementSibling.src));
+  if (interrupted) return;
+  const seen = verdict.description ? `見えたもの：${verdict.description}\n` : '';
+  if (verdict.ok && !verdict.problems) {
+    status.textContent = `${seen}画像モデル：依頼どおりに見えます。`;
+    return;
+  }
+  // Only a clear OK passes; an answer without OK or FIX still means the drawing did not look right.
+  const problems = verdict.problems || `It does not clearly look like what was asked. What the drawing shows: ${verdict.description}`;
+  status.textContent = verdict.problems ? `${seen}画像モデルの指摘：${problems}` : `${seen}画像モデル：依頼どおりとは言えないようです。`;
+  addNote('指摘をもとに、AIに1回だけ直してもらいます。');
+  const messages = [
+    ...base,
+    { role: 'assistant', content: `\`\`\`logo\n${code}\n\`\`\`` },
+    { role: 'user', content: `I looked at the drawing this program makes. Problems: ${problems}\nImprove the program to fix them. Reply with the complete program in one code block.` }
+  ];
+  const reply = await generate(messages, addMessage('assistant', '…'), 0);
+  if (interrupted) return;
+  const improved = extractCode(reply);
+  const error = isTextReply(reply) ? 'プログラムがありませんでした。' : checkProgram(improved);
+  const penProblem = error ? null : findPenUpProblem(improved);
+  if (error || penProblem) {
+    addNote(`直したコードに問題があったので、最初の絵のままにします（${error ?? penProblemNote(penProblem)}）。`, 'warn');
+    return;
+  }
+  const applied = applyProgram(improved);
+  history[history.length - 1] = { request, code: improved, applied };
+  if (settings.autoRun) interpreter.run();
+  addNote(settings.autoRun ? '✓ 画像モデルの指摘をもとに直して実行しました。' : '✓ 画像モデルの指摘をもとに直しました。');
+}
+
 function onFailure(code, error) {
   addNote(`エラーが残りました：${error}`, 'error');
   addActions([{
@@ -660,6 +765,7 @@ async function handleRequest(request) {
       const penProblem = error ? null : findPenUpProblem(code);
       if (!error && !penProblem) {
         onSuccess(request, code);
+        if (settings.useVision && visionLoaded) await reviewWithVision(request, code, base);
         return;
       }
       if (attempt === settings.maxRetries) {
@@ -671,6 +777,7 @@ async function handleRequest(request) {
           // The program is valid, so show it anyway rather than throwing the work away.
           onSuccess(request, code);
           addNote(`注意：${penProblemNote(penProblem)}`, 'warn');
+          if (settings.useVision && visionLoaded) await reviewWithVision(request, code, base);
         }
         return;
       }
@@ -713,6 +820,7 @@ function submit() {
 
 function init() {
   runPenCheckTests({ findPenUpProblem });
+  runSnapshotTests({ renderSnapshot });
   setupSettings();
   loadButton.addEventListener('click', loadModel);
   $('chat-form').addEventListener('submit', event => {
