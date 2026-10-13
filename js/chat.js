@@ -54,8 +54,9 @@ How to draw well:
 - Circle: repeat 36 [fd S rt 10] draws a circle about 11 * S wide on the right side of the turtle.
 - Regular polygon with N sides: repeat N [fd S rt 360 / N].
 
-Example request: 星を描いて
-星を描きます。
+Reference samples: these only show how programs are written. They are not part of the conversation and are not pictures drawn earlier.
+
+Sample program for a star:
 \`\`\`logo
 cs
 setpc 14
@@ -65,8 +66,7 @@ repeat 5 [fd 200 rt 144]
 pu home pd
 \`\`\`
 
-Example request: 木を描いて
-茶色の幹と緑の丸い葉の木を描きます。
+Sample program for a tree with a brown trunk and round green leaves:
 \`\`\`logo
 to rect :w :h
   repeat 2 [fd :h rt 90 fd :w rt 90]
@@ -111,6 +111,19 @@ const LOGO_GRAMMAR = [
   'name ::= [a-z]+'
 ].join('\n');
 
+// FNV-1a hashes of earlier default system prompts. A saved copy of one of them is treated as "use the default",
+// so people who once pressed Save still get prompt improvements. Add the old hash here whenever the default changes.
+const RETIRED_DEFAULT_PROMPTS = ['daf0cfbf', 'd7d65135'];
+
+function promptHash(text) {
+  let hash = 0x811c9dc5;
+  for (const char of text) {
+    hash ^= char.codePointAt(0);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash.toString(16).padStart(8, '0');
+}
+
 const DEFAULT_SETTINGS = {
   model: 'Qwen3-4B-q4f16_1-MLC',
   temperature: 0.3,
@@ -121,6 +134,9 @@ const DEFAULT_SETTINGS = {
   autoRun: true,
   systemPrompt: DEFAULT_SYSTEM_PROMPT
 };
+
+// Requests that point at an earlier picture. Words like 前の alone are left out, since 前の足 means "front legs".
+const EARLIER_PICTURE = /さっき|先ほど|前回|もう一度|もう一回|もういっかい|前の絵|前のプログラム|前に描いた|同じ絵|元の絵|again|previous/i;
 
 const SUGGESTIONS = ['家を描いて', '花を描いて', '雪だるまを描いて', '六角形を色を変えながら回転させて描いて'];
 
@@ -162,7 +178,9 @@ let programAtNewSession = null;
 function loadSettings() {
   try {
     const stored = JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? '{}');
+    if (stored.systemPrompt && RETIRED_DEFAULT_PROMPTS.includes(promptHash(stored.systemPrompt))) delete stored.systemPrompt;
     const merged = { ...DEFAULT_SETTINGS, ...stored };
+    merged.systemPrompt ??= DEFAULT_SYSTEM_PROMPT;
     if (!MODELS.some(model => model.id === merged.model)) merged.model = DEFAULT_SETTINGS.model;
     return merged;
   } catch (_) {
@@ -171,7 +189,9 @@ function loadSettings() {
 }
 
 function saveSettings() {
-  try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch (_) { /* storage unavailable */ }
+  // An unchanged prompt is stored as null so a future default replaces it.
+  const stored = { ...settings, systemPrompt: settings.systemPrompt === DEFAULT_SYSTEM_PROMPT ? null : settings.systemPrompt };
+  try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(stored)); } catch (_) { /* storage unavailable */ }
 }
 
 function modelInfo(id) {
@@ -485,6 +505,10 @@ function extractCode(reply) {
     .trim();
 }
 
+function isTextReply(reply) {
+  return !reply.includes('```') && checkProgram(extractCode(reply)) !== null;
+}
+
 function currentProgram() {
   // Only an English program can be shown to the model, since the prompt teaches English commands.
   if (!settings.includeCode || interpreter.locale !== i18n.English) return '';
@@ -544,6 +568,13 @@ async function handleRequest(request) {
   interrupted = false;
   updateUi();
   addMessage('user', request);
+  // With no earlier program the model would "redraw" one of the samples in the system prompt, so answer here instead.
+  if (!history.length && !currentProgram() && EARLIER_PICTURE.test(request)) {
+    addMessage('assistant', 'この会話ではまだ何も描いていないので、前の絵が分かりません。描きたいものを教えてください。');
+    generating = false;
+    updateUi();
+    return;
+  }
   fitHistory(request);
   const base = buildMessages(request);
   let messages = base;
@@ -552,15 +583,18 @@ async function handleRequest(request) {
       const bubble = addMessage('assistant', '…');
       const reply = await generate(messages, bubble, attempt);
       if (interrupted) return;
+      const textOnly = isTextReply(reply);
       const code = extractCode(reply);
-      const error = checkProgram(code);
+      const error = textOnly ? 'AIの返事にプログラムがありませんでした。' : checkProgram(code);
       const penProblem = error ? null : findPenUpProblem(code);
       if (!error && !penProblem) {
         onSuccess(request, code);
         return;
       }
       if (attempt === settings.maxRetries) {
-        if (error) {
+        if (textOnly) {
+          addNote(`エラーが残りました：${error}`, 'error');
+        } else if (error) {
           onFailure(code, error);
         } else {
           // The program is valid, so show it anyway rather than throwing the work away.
@@ -571,9 +605,11 @@ async function handleRequest(request) {
       }
       const note = error ? `エラー：${error}` : penProblemNote(penProblem);
       addNote(`${note} → AIに修正を頼みます（${attempt + 1}/${settings.maxRetries}）`, 'warn');
-      const feedback = error
-        ? `That program has an error: ${error}\nFix it. Use only the commands in the rules, and reply with the complete corrected program in one code block.`
-        : `${penProblemFeedback(penProblem)}\nReply with the complete corrected program in one code block.`;
+      const feedback = textOnly
+        ? 'Your reply has no program. Write the program for the request, in one code block.'
+        : error
+          ? `That program has an error: ${error}\nFix it. Use only the commands in the rules, and reply with the complete corrected program in one code block.`
+          : `${penProblemFeedback(penProblem)}\nReply with the complete corrected program in one code block.`;
       messages = [
         ...base,
         { role: 'assistant', content: `\`\`\`logo\n${code}\n\`\`\`` },
