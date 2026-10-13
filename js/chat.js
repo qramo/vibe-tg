@@ -154,6 +154,8 @@ let history = [];
 // Scales the character-based estimate to the loaded model's tokenizer, learned from the real prompt token counts.
 let tokenScale = 1;
 let lastUsage = null;
+// The editor program at the moment a new conversation started; it is not shown to the model unless someone edits it.
+let programAtNewSession = null;
 
 // ---------- Settings ----------
 
@@ -332,8 +334,9 @@ function fitHistory(request) {
 function startNewSession() {
   history = [];
   lastUsage = null;
+  programAtNewSession = editor.value.trim();
   log.replaceChildren();
-  addNote('新しい会話を始めました。エディタのプログラムはそのまま残っています。');
+  addNote('新しい会話を始めました。エディタのプログラムは残りますが、手で直すまでAIには見せません。');
   showSuggestions();
   updateUi();
 }
@@ -488,6 +491,7 @@ function currentProgram() {
   const program = editor.value.trim();
   // The model's last program is already in the history; send the editor only after someone changed it.
   if (history.length && program === history.at(-1).applied.trim()) return '';
+  if (program === programAtNewSession) return '';
   return program;
 }
 
