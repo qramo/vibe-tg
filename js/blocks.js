@@ -122,6 +122,14 @@ function isNameCharacter(char) {
   return nameTokenizer.isLetter(char);
 }
 
+// Mirrors the tokenizer: digits never start a name, procedure names keep them only after an English first letter,
+// parameter names after any first letter.
+function cleanName(text, digitsAllowed) {
+  const chars = [...text.normalize('NFKC')].filter(char => isNameCharacter(char) || /[0-9]/.test(char));
+  while (chars.length && /[0-9]/.test(chars[0])) chars.shift();
+  return (digitsAllowed(chars) ? chars : chars.filter(char => !/[0-9]/.test(char))).join('');
+}
+
 function isPrimitiveAlias(word) {
   const lower = word.toLowerCase();
   return interpreter.locale.primitiveAliases.some(item => item.aliases.includes(lower));
@@ -214,14 +222,13 @@ function defineBlocks() {
         ],
         extensions: ['colours_more', 'shape_hat']
       });
-      this.setTooltip('名前と引数は英字か、ひらがな・カタカナ・漢字で入力します（数字や記号は使えません。引数は空白区切り）。');
+      this.setTooltip('名前は英字か、ひらがな・カタカナ・漢字で入力します（英字で始まる名前と引数は、2文字目から数字も使えます）。引数は空白区切りです。');
       this.getField('NAME').setValidator(value => {
-        const name = [...value.normalize('NFKC')].filter(isNameCharacter).join('');
+        const name = cleanName(value, chars => /[A-Za-z]/.test(chars[0] ?? ''));
         return name && !isPrimitiveAlias(name) ? name : null;
       });
       this.getField('PARAMS').setValidator(value =>
-        [...value.normalize('NFKC')].map(char => (isNameCharacter(char) ? char : ' ')).join('')
-          .trim().split(/\s+/).filter(Boolean).join(' '));
+        value.normalize('NFKC').split(/[^\p{L}\p{N}]+/u).map(word => cleanName(word, () => true)).filter(Boolean).join(' '));
     }
   };
 

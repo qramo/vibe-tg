@@ -640,6 +640,30 @@ function runTokenizerTests(i18n) {
     );
     tests.push(
         assertTokens(
+            'Variable names may contain digits after the first letter',
+            "English",
+            "fd :r1 + :size20",
+            [
+                new Token(0,    "fd",       Tokenizer.tokenTypes.PRIMITIVE, Tokenizer.primitives.FORWARD),
+                new Token(3,    ":r1",      Tokenizer.tokenTypes.VARIABLE,  Tokenizer.primitives.NONE),
+                new Token(7,    "+",        Tokenizer.tokenTypes.DELIMITER, Tokenizer.primitives.NONE),
+                new Token(9,    ":size20",  Tokenizer.tokenTypes.VARIABLE,  Tokenizer.primitives.NONE)
+            ]
+        )
+    );
+    tests.push(
+        assertTokens(
+            'Procedure names starting with an English letter may contain digits',
+            "English",
+            "snowman2 30",
+            [
+                new Token(0,    "snowman2", Tokenizer.tokenTypes.PROCEDURE_NAME,    Tokenizer.primitives.NONE),
+                new Token(9,    "30",       Tokenizer.tokenTypes.NUMBER,            Tokenizer.primitives.NONE)
+            ]
+        )
+    );
+    tests.push(
+        assertTokens(
             'Japanese command directly followed by a number',
             "Japanese",
             "まえ100",

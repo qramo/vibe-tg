@@ -7,13 +7,15 @@ import { runPenCheckTests } from '../test/penchecktests.js';
 const SETTINGS_KEY = 'vibe-tg-chat-settings';
 
 // VRAM figures come from WebLLM 0.2.85's prebuilt model list.
+// recommendedFor marks the pick per device memory, chosen by size and by how new the model is.
 const MODELS = [
-  { id: 'Qwen3.5-4B-q4f16_1-MLC', label: 'Qwen3.5 4B', vram: 3.9 },
-  { id: 'Qwen3-4B-q4f16_1-MLC', label: 'Qwen3 4B', vram: 3.4 },
+  { id: 'Qwen3.5-9B-q4f16_1-MLC', label: 'Qwen3.5 9B', vram: 6.4, recommendedFor: 'メモリ24GB〜', note: '最新・最大（ダウンロード約5GB）' },
+  { id: 'Qwen3.5-4B-q4f16_1-MLC', label: 'Qwen3.5 4B', vram: 3.9, note: '最新世代の4B' },
+  { id: 'Qwen3-4B-q4f16_1-MLC', label: 'Qwen3 4B', vram: 3.4, recommendedFor: 'メモリ16GB', note: '4B級で軽め。動作確認済み（既定）' },
   { id: 'Phi-4-mini-instruct-q4f16_1-MLC', label: 'Phi-4-mini 3.8B', vram: 3.4 },
   { id: 'Qwen2.5-Coder-3B-Instruct-q4f16_1-MLC', label: 'Qwen2.5-Coder 3B', vram: 2.5 },
   { id: 'Llama-3.2-3B-Instruct-q4f16_1-MLC', label: 'Llama 3.2 3B', vram: 2.3 },
-  { id: 'Qwen3.5-2B-q4f16_1-MLC', label: 'Qwen3.5 2B', vram: 2.2 },
+  { id: 'Qwen3.5-2B-q4f16_1-MLC', label: 'Qwen3.5 2B', vram: 2.2, recommendedFor: 'メモリ8GB', note: '小型で一番新しい世代' },
   { id: 'Qwen3-1.7B-q4f16_1-MLC', label: 'Qwen3 1.7B', vram: 2.0 },
   { id: 'Qwen3.5-0.8B-q4f16_1-MLC', label: 'Qwen3.5 0.8B', vram: 1.6 },
   { id: 'Qwen3-0.6B-q4f16_1-MLC', label: 'Qwen3 0.6B', vram: 1.4 }
@@ -46,6 +48,7 @@ Rules:
 - Names use English letters only.
 - There are no comments, no variables (make), no setxy or setpos, no arc or circle commands.
 - Colors: 0 black, 1 blue, 2 green, 3 cyan, 4 red, 5 magenta, 6 yellow, 7 white, 8 brown, 9 tan, 10 dark green, 11 aqua, 12 salmon, 13 purple, 14 orange, 15 grey.
+- The background is 15 (light grey), so lines drawn with 15 are invisible and 7 (white) is hard to see. Use darker colors for lines.
 - The turtle starts at the center facing up. The canvas reaches about 270 steps from the center in every direction.
 
 How to draw well:
@@ -113,7 +116,7 @@ const LOGO_GRAMMAR = [
 
 // FNV-1a hashes of earlier default system prompts. A saved copy of one of them is treated as "use the default",
 // so people who once pressed Save still get prompt improvements. Add the old hash here whenever the default changes.
-const RETIRED_DEFAULT_PROMPTS = ['daf0cfbf', 'd7d65135'];
+const RETIRED_DEFAULT_PROMPTS = ['daf0cfbf', 'd7d65135', '02a20e71'];
 
 function promptHash(text) {
   let hash = 0x811c9dc5;
@@ -132,7 +135,9 @@ const DEFAULT_SETTINGS = {
   grammar: false,
   includeCode: true,
   autoRun: true,
-  systemPrompt: DEFAULT_SYSTEM_PROMPT
+  systemPrompt: DEFAULT_SYSTEM_PROMPT,
+  // Where WebLLM keeps downloaded models: the Cache API first, OPFS after a Cache API failure.
+  cacheBackend: 'cache'
 };
 
 // Requests that point at an earlier picture. Words like 前の alone are left out, since 前の足 means "front legs".
@@ -160,6 +165,7 @@ const progressText = $('chat-progress-text');
 const dialog = $('chat-settings');
 
 let settings = loadSettings();
+let worker = null;
 let engine = null;
 let loadedModel = null;
 let loading = false;
@@ -203,28 +209,70 @@ function clampNumber(value, min, max, fallback) {
   return Number.isFinite(number) ? Math.min(max, Math.max(min, number)) : fallback;
 }
 
+// Recommended models first, in order of device memory; the rest keep their order.
+const RECOMMENDATION_ORDER = ['メモリ8GB', 'メモリ16GB', 'メモリ24GB〜'];
+
+function sortedModels() {
+  const rank = model => (model.recommendedFor ? RECOMMENDATION_ORDER.indexOf(model.recommendedFor) : RECOMMENDATION_ORDER.length);
+  return [...MODELS].sort((a, b) => rank(a) - rank(b));
+}
+
+function selectedModelId() {
+  return $('setting-model').querySelector('input[name="model"]:checked')?.value ?? settings.model;
+}
+
+function renderModelList() {
+  $('setting-model').replaceChildren(...sortedModels().map(model => {
+    const row = document.createElement('label');
+    row.className = `model-option${model.recommendedFor ? ' is-recommended' : ''}`;
+    const radio = document.createElement('input');
+    radio.type = 'radio';
+    radio.name = 'model';
+    radio.value = model.id;
+    radio.checked = model.id === settings.model;
+    const name = document.createElement('span');
+    name.className = 'model-name';
+    name.textContent = model.label;
+    const meta = document.createElement('span');
+    meta.className = 'model-meta';
+    meta.dataset.base = [`VRAM 約${model.vram}GB`, model.note].filter(Boolean).join('・');
+    meta.textContent = meta.dataset.base;
+    row.append(radio, name, meta);
+    if (model.recommendedFor) {
+      const badge = document.createElement('span');
+      badge.className = 'model-badge';
+      badge.textContent = `${model.recommendedFor}向け`;
+      row.append(badge);
+    }
+    return row;
+  }));
+}
+
+function appConfig(webllm, cacheBackend = settings.cacheBackend) {
+  return { ...webllm.prebuiltAppConfig, cacheBackend };
+}
+
 async function markCachedModels() {
   try {
     const webllm = await import(WEBLLM_URL);
-    for (const option of $('setting-model').options) {
-      const cached = await webllm.hasModelInCache(option.value);
-      const info = modelInfo(option.value);
-      option.textContent = `${info.label}（VRAM 約${info.vram}GB）${cached ? '・保存済み' : ''}`;
+    for (const radio of $('setting-model').querySelectorAll('input[name="model"]')) {
+      const cached = await webllm.hasModelInCache(radio.value, appConfig(webllm));
+      const meta = radio.parentElement.querySelector('.model-meta');
+      meta.textContent = meta.dataset.base + (cached ? '・保存済み' : '');
     }
-  } catch (_) { /* the labels just stay without the cached mark */ }
+  } catch (_) { /* the rows just stay without the cached mark */ }
 }
 
 async function deleteSelectedModel() {
-  const id = $('setting-model').value;
+  const id = selectedModelId();
   if (!confirm(`${modelInfo(id).label} の保存データを削除しますか？次に使うときは再ダウンロードが必要です。`)) return;
   const webllm = await import(WEBLLM_URL);
-  await webllm.deleteModelAllInfoInCache(id);
+  await webllm.deleteModelAllInfoInCache(id, appConfig(webllm));
   await markCachedModels();
 }
 
 function openSettings() {
-  $('setting-model').replaceChildren(...MODELS.map(model =>
-    new Option(`${model.label}（VRAM 約${model.vram}GB）`, model.id, false, model.id === settings.model)));
+  renderModelList();
   markCachedModels();
   $('setting-temperature').value = settings.temperature;
   $('setting-retries').value = settings.maxRetries;
@@ -243,7 +291,7 @@ function setupSettings() {
   $('setting-reset-prompt').addEventListener('click', () => { $('setting-system-prompt').value = DEFAULT_SYSTEM_PROMPT; });
   $('chat-settings-form').addEventListener('submit', () => {
     settings = {
-      model: $('setting-model').value,
+      model: selectedModelId(),
       temperature: clampNumber($('setting-temperature').value, 0, 1.5, DEFAULT_SETTINGS.temperature),
       maxRetries: Math.round(clampNumber($('setting-retries').value, 0, 5, DEFAULT_SETTINGS.maxRetries)),
       maxTokens: Math.round(clampNumber($('setting-max-tokens').value, 256, 2048, DEFAULT_SETTINGS.maxTokens)),
@@ -431,13 +479,15 @@ async function loadModel() {
     progressBar.value = report.progress;
     progressText.textContent = `${Math.round(report.progress * 100)}% ${report.text}`;
   };
+  let retryWithOpfs = false;
   try {
     const webllm = await import(WEBLLM_URL);
     if (!engine) {
-      const worker = new Worker(new URL('./llm-worker.js', import.meta.url), { type: 'module' });
-      engine = await webllm.CreateWebWorkerMLCEngine(worker, settings.model, { initProgressCallback: onProgress });
+      worker = new Worker(new URL('./llm-worker.js', import.meta.url), { type: 'module' });
+      engine = await webllm.CreateWebWorkerMLCEngine(worker, settings.model, { initProgressCallback: onProgress, appConfig: appConfig(webllm) });
     } else {
       engine.setInitProgressCallback(onProgress);
+      engine.setAppConfig(appConfig(webllm));
       await engine.reload(settings.model);
     }
     loadedModel = settings.model;
@@ -448,9 +498,25 @@ async function loadModel() {
   } catch (error) {
     console.error(error);
     loadedModel = null;
+    if (!engine && worker) {
+      worker.terminate();
+      worker = null;
+    }
     progressText.textContent = '';
     progress.hidden = true;
     const message = String(error.message ?? error);
+    // Some browsers fail to store certain model files in the Cache API; OPFS takes them, so switch once and retry.
+    if (/Cache/.test(message) && settings.cacheBackend === 'cache') {
+      retryWithOpfs = true;
+      settings.cacheBackend = 'opfs';
+      saveSettings();
+      try {
+        const webllm = await import(WEBLLM_URL);
+        await webllm.deleteModelAllInfoInCache(settings.model, appConfig(webllm, 'cache'));
+      } catch (_) { /* leftovers in the Cache API only waste space */ }
+      addNote('ブラウザーの Cache Storage にモデルを保存できなかったので、保存先を OPFS に切り替えて読み込み直します。');
+      return;
+    }
     const storageHint = /Cache|Quota/i.test(message)
       ? ' ブラウザーの保存容量が足りない可能性があります。⚙設定で使わないモデルの保存データを削除してから、もう一度読み込んでください。'
       : '';
@@ -459,6 +525,7 @@ async function loadModel() {
     loading = false;
     updateUi();
     if (loadedModel) input.focus();
+    if (retryWithOpfs) loadModel();
   }
 }
 
@@ -544,12 +611,16 @@ function onSuccess(request, code) {
 }
 
 function penProblemNote(problem) {
+  if (problem.kind === 'invisible') return `線がすべて背景と同じ色（${problem.color}）なので、何も見えません`;
   return problem.kind === 'nothing'
     ? 'ペンが上がったまま（pu）なので、線が1本も描かれません'
     : `ペンが上がったまま（pu）で${problem.moves}回続けて動いていて、その部分の線が描かれません`;
 }
 
 function penProblemFeedback(problem) {
+  if (problem.kind === 'invisible') {
+    return `Every line is drawn in color ${problem.color}, the same as the background, so nothing can be seen. Use another pen color (setpc), such as 0 black or 1 blue.`;
+  }
   return problem.kind === 'nothing'
     ? 'This program draws nothing: the pen is up (pu) every time the turtle moves. After moving to a starting point with pu, put pd before drawing.'
     : `Part of the picture is not drawn: the turtle moves ${problem.moves} times in a row with the pen up (pu), so that shape is invisible. After moving to the start of each part with pu, put pd before drawing it.`;

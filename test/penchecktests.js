@@ -36,6 +36,10 @@ export function runPenCheckTests({ findPenUpProblem }) {
         "pu forever 1"
     ]), null));
     tests.push(assertProblem("Forgetting pd draws nothing", "pu fd 50 rt 90 fd 50", "nothing"));
+    tests.push(assertProblem("Lines in the background color are invisible", "cs setpc 15 repeat 36 [fd 10 rt 10]", "invisible"));
+    tests.push(assertProblem("Cyan lines on an aqua background are invisible", "setbg 11 setpc 3 fd 50", "invisible"));
+    tests.push(assertProblem("Some visible lines are fine", "setpc 15 fd 50 setpc 0 fd 50", null));
+    tests.push(assertProblem("Grey lines on a dark background are fine", "setbg 0 setpc 15 fd 50", null));
     tests.push(assertProblem("A whole drawing with the pen up draws nothing", "cs pu bk 100 repeat 4 [fd 50 rt 90] pu home", "nothing"));
     tests.push(assertProblem("A shape drawn after a jump without pd is caught", "fd 50 pu fd 20 rt 90 repeat 4 [fd 30 rt 90] pd fd 10", "shape"));
     tests.push(assertProblem("A procedure shape drawn with the pen up is caught", lines([

@@ -184,8 +184,10 @@ class Tokenizer {
             } else if (this.isLetter(this.currentCharacter)) {
                 let word = this.currentCharacter;
                 let startIndex = this.currentIndex;
+                // Words starting with an English letter may contain digits (square2); Japanese words stop at digits so "まえ100" splits
+                let digitsAllowed = /[A-Za-z]/.test(word);
                 this.getNextCharacter();
-                while (this.isLetter(this.currentCharacter)) {
+                while (this.isLetter(this.currentCharacter) || (digitsAllowed && this.isNumber(this.currentCharacter))) {
                     word += this.currentCharacter;
                     this.getNextCharacter();
                 }
@@ -202,7 +204,8 @@ class Tokenizer {
                 let variable = this.currentCharacter;
                 let startIndex = this.currentIndex;
                 this.getNextCharacter();
-                while (this.isLetter(this.currentCharacter)) {
+                // Digits may follow the first letter (:r1, :size2); procedure names stay letters only so "fd100" still splits
+                while (this.isLetter(this.currentCharacter) || (variable.length > 1 && this.isNumber(this.currentCharacter))) {
                     variable += this.currentCharacter;
                     this.getNextCharacter();
                 }

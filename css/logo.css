@@ -358,8 +358,51 @@ kbd {
   background: #fff;
   font: inherit;
 }
-.settings-model-row { display: flex; gap: 8px; min-width: 0; }
-.settings-model-row select { flex: 1 1 auto; min-width: 0; }
+.settings-model-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+  font-size: 13px;
+  font-weight: 700;
+}
+.model-list {
+  display: grid;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+}
+.model-option {
+  display: grid;
+  grid-template-columns: auto max-content minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 4px 10px;
+  padding: 7px 12px;
+  border-top: 1px solid #edf3f0;
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+.model-option:first-child { border-top: 0; }
+.model-option:hover { background: #f8fcfa; }
+.model-option:has(input:checked) { background: #eef7f2; }
+.model-option input { margin: 0; accent-color: var(--green); }
+.model-name { color: var(--ink); font-size: 13px; }
+.model-meta { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.model-option.is-recommended .model-name { font-size: 14px; font-weight: 800; }
+.model-option.is-recommended .model-meta { color: #40565e; }
+.model-option.is-recommended + .model-option:not(.is-recommended) { border-top: 2px solid var(--line); }
+.model-badge {
+  padding: 2px 8px;
+  border-radius: 999px;
+  color: #fff;
+  background: var(--green);
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
 .settings-checks { display: grid; gap: 6px; }
 .settings-checks label { display: flex; align-items: center; gap: 8px; }
 .settings-prompt-heading {
@@ -472,6 +515,10 @@ kbd {
   .view-tabs button { padding: 0 10px; }
   .settings-dialog { padding: 16px; }
   .settings-grid { grid-template-columns: 1fr; gap: 6px; }
+  .model-option { grid-template-columns: auto minmax(0, 1fr) auto; }
+  .model-option input { grid-row: 1 / span 2; }
+  .model-badge { grid-column: 3; grid-row: 1; }
+  .model-meta { grid-column: 2 / -1; grid-row: 2; white-space: normal; }
   #logo-editor { min-height: 300px; padding: 13px; font-size: 13px; }
   .site-footer { flex-direction: column; gap: 8px; }
 }
