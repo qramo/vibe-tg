@@ -36,14 +36,15 @@ function runParserTests(Tokenizer, Parser, i18n) {
         let actualTurtleDrawingEvents = [];
         let actualErrorCode = Parser.errors.NONE;
         
-        window.addEventListener(Parser.events.errorEvent.name, (e) => {
+        let onError = (e) => {
             actualErrorCode = e.detail.errorCode;
             parser.stopParsing(); // The Interpreter stops at an error too
-        }, false);
-
-        window.addEventListener(Parser.events.turtleDrawingEvent.name, (e) => {
+        };
+        let onTurtleDrawing = (e) => {
             actualTurtleDrawingEvents.push(e.detail);
-        }, false);
+        };
+        window.addEventListener(Parser.events.errorEvent.name, onError, false);
+        window.addEventListener(Parser.events.turtleDrawingEvent.name, onTurtleDrawing, false);
 
         let tokens = tokenizer.tokenize(script);
         parser.initializeParsing(tokens);
@@ -52,19 +53,21 @@ function runParserTests(Tokenizer, Parser, i18n) {
         } while(parser.currentToken.tokenType !== Tokenizer.tokenTypes.END_OF_TOKEN_STREAM &&
             !parser.stopParsingRequested)
 
-        if (assertTurtleDrawingEvents(expectedTurtleDrawingEvents, actualTurtleDrawingEvents) === true
-            && assertParserError(expectedErrorCode, actualErrorCode) === true) {
+        window.removeEventListener(Parser.events.errorEvent.name, onError, false);
+        window.removeEventListener(Parser.events.turtleDrawingEvent.name, onTurtleDrawing, false);
+
+        let success = assertTurtleDrawingEvents(expectedTurtleDrawingEvents, actualTurtleDrawingEvents) === true
+            && assertParserError(expectedErrorCode, actualErrorCode) === true;
+        if (success) {
             testPassed(testName);
         } else {
-            testFailed(testName);            
+            testFailed(testName);
             if (expectedTurtleDrawingEvents.length !== actualTurtleDrawingEvents.length) {
                 console.table(expectedTurtleDrawingEvents, actualTurtleDrawingEvents);
                 throw "Expected and actual turtle drawing events are different";
             }
         }
-
-        window.removeEventListener(Parser.events.errorEvent.name, this);
-        window.removeEventListener(Parser.events.turtleDrawingEvent.name, this);
+        return success;
     };
     let assertTurtleDrawingEvent = (expectedTurtleDrawingEvent = {}, actualTurtleDrawingEvent = {}) => {
         return expectedTurtleDrawingEvent[0] === actualTurtleDrawingEvent.primitive
