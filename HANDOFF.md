@@ -99,7 +99,7 @@ module からは、classic script のトップレベル宣言（`interpreter`、
 
 ## テスト
 
-ページを開くと全テストが自動で実行され、結果が console に `TEST PASSED/FAILED` で出ます（2026-10-14 時点で計160件、全件合格）。各 `run…Tests` は全件合格なら `true` を返します。
+ページを開くと全テストが自動で実行され、結果が console に `TEST PASSED/FAILED` で出ます（2026-10-14 時点で計164件、全件合格）。各 `run…Tests` は全件合格なら `true` を返します。
 
 | 種類 | 件数 | 手動で実行するとき（console） |
 |---|---|---|
@@ -109,7 +109,7 @@ module からは、classic script のトップレベル宣言（`interpreter`、
 | ブロック変換 | 50 | `(await import('./test/blocktests.js')).runBlockTests(await import('./js/blocks.js'))` |
 | ペン判定 | 25 | `(await import('./test/penchecktests.js')).runPenCheckTests(await import('./js/pencheck.js'))` |
 | 撮影 | 4 | `await (await import('./test/snapshottests.js')).runSnapshotTests(await import('./js/snapshot.js'))` |
-| 外部モデル | 11 | `await (await import('./test/providertests.js')).runProviderTests(await import('./js/providers.js'))` |
+| 外部モデル | 15 | `await (await import('./test/providertests.js')).runProviderTests(await import('./js/providers.js'))` |
 
 - Parser テストの補助は、期待したイベントと**件数まで一致**することを確かめます。また、アプリと同じくエラーが出たら実行を止めます。
   - 以前は件数を比べておらず、エラー後に余計な描画をしても合格していました。
@@ -213,14 +213,19 @@ Scratch Blocks 2.x は Blockly 12 を同梱した単一の ESM（`dist/main.mjs`
   - `usage` は `{ input, output }` にそろえ、文脈ゲージの補正（`tokenScale`）に使います。
 - **ローカルサーバー・OpenAI・Gemini** は、どれも OpenAI 互換の `/chat/completions` を `fetch` で呼び、SSE を `readEvents()` で読みます。Gemini は OpenAI 互換エンドポイント（`/v1beta/openai`）を使います。
   - OpenAI は推論モデルが `temperature` の既定値以外を受け付けず、出力上限が `max_completion_tokens` なので、`sendsTemperature: false` と `maxTokensField` で切り替えています。
-  - ローカルは「考える過程を省く」（既定オン）で `reasoning_effort: 'none'` を送ります。Ollama の Qwen3 は、これがないと出力枠をすべて思考に使い、本文が空になりました。考えないモデルは無視し、gpt-oss は無視して考え続けます（それでも 2048 に収まった）。
+  - 「考える量」は `reasoning_effort`（none / low / medium / high）として送り、「サービスの既定」なら送りません。推論しない OpenAI のモデル（gpt-4.1 など）は `reasoning_effort` を付けると 400 になるためです。
+  - ローカルの既定は none です。Ollama の Qwen3 は、これがないと出力枠 2048 をすべて思考に使い、本文が空になりました。考えないモデルは無視し、gpt-oss は none を無視して考え続けます。
   - CORS は 2026-10-14 に確認済み：api.openai.com と Gemini は `Origin: https://qramo.github.io` を許可。Gemini の preflight は、`Authorization` と `Content-Type` 以外のヘッダーを含めると 403 になります。
 - **Claude** は公式 SDK（`@anthropic-ai/sdk@0.129.0`、jsDelivr の `+esm`）を `dangerouslyAllowBrowser: true` で使います。SDK が `anthropic-dangerous-direct-browser-access: true` を付けます。
-  - 現行の Claude は `temperature` を送ると 400 になり、Opus 5.5 は思考を切れないので、`thinking` も `temperature` も送らず、`output_config.effort: 'low'` で速さを優先しています。
+  - 現行の Claude は `temperature` を送ると 400 になるので送りません。
+  - 「考える量」（既定 low）は `claudeThinking()` で変換します。low / medium / high は `output_config.effort` です。none は、Haiku 5.5 なら `thinking: {type: 'disabled'}`、Sonnet 5.5 なら `{type: 'between_tools'}`（Sonnet 5.5 は disabled が 400）、Opus 5.5 は思考を切れないので effort low にします。
   - 返答の本文は `text_delta` だけを使います（思考は表示しない）。`stop_reason: 'refusal'` はエラーとして表示します。
   - SDK クライアントは作成時の `fetch` を使い続けます。テストで `fetch` を差し替えるときは、モデル名を変えるなどしてクライアントを作り直させてください（`remoteClientKey`）。
-- **接続先ごとの値**（`PROVIDERS`）: 文脈の上限（ローカル 8192、Claude 200,000、OpenAI・Gemini 128,000）、送る履歴（ローカル 3往復、クラウド 4往復）、最大出力トークンの既定（ローカル 2048、クラウド 8000。思考も出力枠を使うため）。
-  - Ollama は文脈長を超えたプロンプトの**先頭（システムプロンプト）を黙って切る**ので、`OLLAMA_CONTEXT_LENGTH=8192` 以上で起動するよう案内しています。
+- **接続先ごとの値**（`PROVIDERS`）: 文脈の上限（ローカル 8192、Claude 200,000、OpenAI・Gemini 128,000）、送る履歴（ローカル 3往復、クラウド 4往復）、最大出力トークンの既定（ローカル 2048、クラウド 8000。思考も出力枠を使うため）、考える量の選択肢と既定。
+  - ローカルの文脈の長さは設定で変えられます（`settings.remote.local.contextWindow`）。サーバーの設定と合わせる必要があり、Ollama は超えたプロンプトの**先頭（システムプロンプト）を黙って切ります**。
+  - 考える量を上げると思考で出力枠を使い切ることがあります。返答が `finish_reason: length` / `stop_reason: max_tokens` で終わり、コードブロックが閉じていなければ、再試行せずに「最大出力トークン数を増やすか、考える量を減らす」よう表示します（`truncated`）。
+  - 本文が届くまでの間は、吹き出しに「考えています…（N秒）」と経過時間を出します。
+  - 確認：Ollama の qwen3:8b で high・出力 2048 だと上限で止まり（約56秒）、出力 6000 にすると屋根付きの家を描きました（none では四角だけだった）。
 - **画像での見直し**は、外部モデルでは同じモデルに絵の画像を渡して説明させ、同じモデルで判定させます（Phi は読み込まない）。画像の読めないモデルではエラーになります。
 - **文法制約モード**は WebLLM 専用で、外部では無効表示にします。
 - **API キー**:

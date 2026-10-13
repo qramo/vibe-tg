@@ -1,5 +1,5 @@
 // Tests for the external model providers (js/providers.js). They run when the chat module loads and log like the upstream tests.
-export async function runProviderTests({ toOpenAiMessages, toAnthropicContent, readEvents, apiRoot, describeError, ProviderError }) {
+export async function runProviderTests({ toOpenAiMessages, toAnthropicContent, readEvents, apiRoot, describeError, ProviderError, claudeThinking }) {
     let testPassed = (testName) => {
         console.log(`%cTEST %cPASSED %cProviders ${testName}`, 'color: black;', 'color: green; font-weight:bold;', 'color: grey;');
     };
@@ -55,6 +55,14 @@ export async function runProviderTests({ toOpenAiMessages, toAnthropicContent, r
     tests.push(assertEqual("A failed fetch to a local server points at the server and CORS",
         describeError(new TypeError('Failed to fetch'), 'local').startsWith('サーバーにつながりません'), true));
     tests.push(assertEqual("Other errors keep their own message", describeError(new Error('API キーを入れてください。'), 'openai'), 'API キーを入れてください。'));
+
+    tests.push(assertEqual("Claude thinking levels set the effort", claudeThinking('claude-opus-5-5', 'high'), { output_config: { effort: 'high' } }));
+    tests.push(assertEqual("Claude Haiku 5.5 turns thinking off for none",
+        claudeThinking('claude-haiku-5-5', 'none'), { thinking: { type: 'disabled' }, output_config: { effort: 'low' } }));
+    tests.push(assertEqual("Claude Sonnet 5.5 uses between_tools for none",
+        claudeThinking('claude-sonnet-5-5', 'none'), { thinking: { type: 'between_tools' }, output_config: { effort: 'low' } }));
+    tests.push(assertEqual("Claude Opus 5.5 cannot stop thinking, so none becomes low effort",
+        claudeThinking('claude-opus-5-5', 'none'), { output_config: { effort: 'low' } }));
 
     return tests.every(test => test);
 }

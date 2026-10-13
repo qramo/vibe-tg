@@ -5,6 +5,16 @@
 
 export const ANTHROPIC_SDK_URL = 'https://cdn.jsdelivr.net/npm/@anthropic-ai/sdk@0.129.0/+esm';
 
+// How much a model thinks before answering. 'default' sends nothing, for models that reject the setting.
+export const THINKING_LABELS = {
+  default: 'サービスの既定（指定しない）',
+  none: 'none（考えない・速い）',
+  low: 'low（少し考える）',
+  medium: 'medium',
+  high: 'high（じっくり考える・遅い）'
+};
+const OPENAI_THINKING = ['default', 'none', 'low', 'medium', 'high'];
+
 export const PROVIDERS = {
   local: {
     label: 'ローカルサーバー（Ollama・LM Studio など）',
@@ -14,12 +24,17 @@ export const PROVIDERS = {
     keyRequired: false,
     sendsTemperature: true,
     maxTokensField: 'max_tokens',
-    // Ollama cuts the start of a longer prompt (the system prompt) without an error, so stay within its usual setting.
+    // Ollama cuts the start of a longer prompt (the system prompt) without an error, so this must match the server's
+    // setting (OLLAMA_CONTEXT_LENGTH); it can be changed in the settings dialog.
     contextWindow: 8192,
     historyExchanges: 3,
     defaultMaxTokens: 2048,
+    thinkingLevels: OPENAI_THINKING,
+    // Ollama's Qwen3 otherwise spends the whole output limit thinking and answers nothing.
+    defaultThinking: 'none',
+    thinkingNote: 'Ollama は reasoning_effort で考える量を切り替えます。Qwen3 などは none 以外だと「考える／考えない」の2段階で、gpt-oss は none を無視して考えます。',
     modelPlaceholder: '例：qwen3:8b',
-    help: 'Ollama は http://localhost:11434/v1、LM Studio は http://localhost:1234/v1 です。このページを GitHub Pages で開いているときは、サーバー側でこのサイトからのアクセス（CORS）を許可してください。Ollama は OLLAMA_ORIGINS=https://qramo.github.io を付けて起動し、文脈の長さは OLLAMA_CONTEXT_LENGTH=8192 以上にします。API キーは普通は空欄で構いません。'
+    help: 'Ollama は http://localhost:11434/v1、LM Studio は http://localhost:1234/v1 です。このページを GitHub Pages で開いているときは、サーバー側でこのサイトからのアクセス（CORS）を許可してください。Ollama は OLLAMA_ORIGINS=https://qramo.github.io を付けて起動します。文脈の長さはサーバーの設定（Ollama は OLLAMA_CONTEXT_LENGTH、LM Studio はモデルの Context Length）と同じ値にしてください。超えると、サーバーが指示文を黙って切り捨てることがあります。API キーは普通は空欄で構いません。'
   },
   anthropic: {
     label: 'Claude（Anthropic）',
@@ -31,6 +46,9 @@ export const PROVIDERS = {
     contextWindow: 200000,
     historyExchanges: 4,
     defaultMaxTokens: 8000,
+    thinkingLevels: ['none', 'low', 'medium', 'high'],
+    defaultThinking: 'low',
+    thinkingNote: 'Claude Opus 5.5 は考えるのを止められないので、none は low と同じになります。Sonnet 5.5 と Haiku 5.5 は none で考えずに答えます。',
     defaultModel: 'claude-opus-5-5',
     suggestedModels: ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'],
     modelPlaceholder: 'claude-opus-5-5',
@@ -48,6 +66,9 @@ export const PROVIDERS = {
     contextWindow: 128000,
     historyExchanges: 4,
     defaultMaxTokens: 8000,
+    thinkingLevels: OPENAI_THINKING,
+    defaultThinking: 'default',
+    thinkingNote: '推論しないモデル（gpt-4.1 など）は、既定以外を選ぶとエラーになります。none を受け付けないモデルもあります。',
     modelPlaceholder: '例：gpt-5-mini',
     modelFilter: id => /^(gpt|o\d|chatgpt)/.test(id) && !/audio|realtime|transcribe|tts|image|search|instruct/.test(id),
     help: 'API キーは OpenAI Platform（platform.openai.com）で作れます。使用上限を決めたキーを使ってください。依頼文とプログラム（画像で見直すときは絵の画像も）が OpenAI に送られ、使った分の料金がかかります。'
@@ -63,6 +84,9 @@ export const PROVIDERS = {
     contextWindow: 128000,
     historyExchanges: 4,
     defaultMaxTokens: 8000,
+    thinkingLevels: OPENAI_THINKING,
+    defaultThinking: 'default',
+    thinkingNote: 'Gemini の Pro 系は考えるのを止められないので、none ではエラーになります。',
     modelPlaceholder: '例：gemini-2.5-flash',
     modelFilter: id => /gemini/.test(id) && !/embedding|tts|image|live|audio/.test(id),
     help: 'API キーは Google AI Studio（aistudio.google.com）で作れます。依頼文とプログラム（画像で見直すときは絵の画像も）が Google に送られ、無料枠を超えると料金がかかります。'
@@ -141,7 +165,7 @@ export function apiRoot(url) {
   return (/^https?:\/\//i.test(url) ? url : `http://${url}`).replace(/\/+$/, '');
 }
 
-function openAiClient(provider, { baseUrl, apiKey, model, noThinking }) {
+function openAiClient(provider, { baseUrl, apiKey, model, thinking }) {
   const root = apiRoot(baseUrl || provider.defaultBaseUrl);
   const headers = { 'Content-Type': 'application/json', ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}) };
   return {
@@ -157,13 +181,13 @@ function openAiClient(provider, { baseUrl, apiKey, model, noThinking }) {
           stream_options: { include_usage: true },
           [provider.maxTokensField]: maxTokens,
           ...(provider.sendsTemperature && temperature !== undefined ? { temperature } : {}),
-          // Ollama turns thinking off for models such as Qwen3 with this; models that cannot think ignore it.
-          ...(noThinking ? { reasoning_effort: 'none' } : {})
+          ...(thinking && thinking !== 'default' ? { reasoning_effort: thinking } : {})
         })
       });
       if (!response.ok) throw await openAiError(response);
       let text = '';
       let usage = null;
+      let truncated = false;
       await readEvents(response.body, chunk => {
         if (chunk.error) throw new ProviderError(chunk.error.message ?? String(chunk.error), chunk.error.code);
         const delta = chunk.choices?.[0]?.delta?.content;
@@ -171,9 +195,10 @@ function openAiClient(provider, { baseUrl, apiKey, model, noThinking }) {
           text += delta;
           onText?.(text);
         }
+        if (chunk.choices?.[0]?.finish_reason === 'length') truncated = true;
         if (chunk.usage) usage = { input: chunk.usage.prompt_tokens, output: chunk.usage.completion_tokens };
       });
-      return { text, usage };
+      return { text, usage, truncated };
     },
     async listModels() {
       const response = await fetch(`${root}/models`, { headers });
@@ -195,7 +220,15 @@ export function toAnthropicContent(content) {
   });
 }
 
-function anthropicClient({ apiKey, model }) {
+/** Request fields for a thinking level. Only some Claude models can stop thinking, and each in its own way. */
+export function claudeThinking(model, level) {
+  if (level !== 'none') return { output_config: { effort: level } };
+  if (/haiku-5-5/.test(model)) return { thinking: { type: 'disabled' }, output_config: { effort: 'low' } };
+  if (/sonnet-5-5/.test(model)) return { thinking: { type: 'between_tools' }, output_config: { effort: 'low' } };
+  return { output_config: { effort: 'low' } };
+}
+
+function anthropicClient({ apiKey, model, thinking = 'low' }) {
   let client = null;
   const getClient = async () => {
     if (!client) {
@@ -215,8 +248,7 @@ function anthropicClient({ apiKey, model }) {
           model,
           max_tokens: maxTokens,
           ...(system ? { system } : {}),
-          // Drawing programs are short; low effort keeps the always-on thinking quick and cheap.
-          output_config: { effort: 'low' },
+          ...claudeThinking(model, thinking),
           messages: messages
             .filter(message => message.role !== 'system')
             .map(({ role, content }) => ({ role, content: toAnthropicContent(content) }))
@@ -230,7 +262,11 @@ function anthropicClient({ apiKey, model }) {
         }
         const final = await stream.finalMessage();
         if (final.stop_reason === 'refusal') throw new ProviderError('モデルがこの依頼への回答を断りました。');
-        return { text, usage: { input: final.usage.input_tokens, output: final.usage.output_tokens } };
+        return {
+          text,
+          usage: { input: final.usage.input_tokens, output: final.usage.output_tokens },
+          truncated: final.stop_reason === 'max_tokens'
+        };
       } catch (error) {
         throw wrap(error);
       }
@@ -249,8 +285,9 @@ function anthropicClient({ apiKey, model }) {
 }
 
 /**
- * A client for one provider, from { baseUrl, apiKey, model, noThinking }:
- * chat({ messages, maxTokens, temperature, onText, signal }) → { text, usage }, and listModels().
+ * A client for one provider, from { baseUrl, apiKey, model, thinking }:
+ * chat({ messages, maxTokens, temperature, onText, signal }) → { text, usage, truncated }, and listModels().
+ * truncated is true when the reply stopped at maxTokens.
  */
 export function createClient(providerId, options) {
   const provider = PROVIDERS[providerId];

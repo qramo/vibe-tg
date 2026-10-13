@@ -4,7 +4,7 @@ import { checkProgram, applyProgram, selectView, translateProgram, currentLangua
 import { WEBLLM_URL } from './webllm.js';
 import { findPenUpProblem } from './pencheck.js';
 import { renderSnapshot } from './snapshot.js';
-import { PROVIDERS, ProviderError, createClient, describeError, toOpenAiMessages, toAnthropicContent, readEvents, apiRoot } from './providers.js';
+import { PROVIDERS, THINKING_LABELS, ProviderError, createClient, describeError, toOpenAiMessages, toAnthropicContent, readEvents, apiRoot, claudeThinking } from './providers.js';
 import { runSnapshotTests } from '../test/snapshottests.js';
 import { runPenCheckTests } from '../test/penchecktests.js';
 import { runProviderTests } from '../test/providertests.js';
@@ -152,8 +152,8 @@ const DEFAULT_SETTINGS = {
     baseUrl: '',
     model: provider.defaultModel ?? '',
     maxTokens: provider.defaultMaxTokens,
-    // Local only: thinking models such as Qwen3 otherwise spend the whole output limit thinking.
-    noThinking: id === 'local'
+    thinking: provider.defaultThinking,
+    contextWindow: provider.contextWindow
   }])),
   // Where WebLLM keeps downloaded models: the Cache API first, OPFS after a Cache API failure.
   cacheBackend: 'cache'
@@ -220,7 +220,14 @@ function loadSettings() {
     merged.visionPrompt ??= DEFAULT_VISION_PROMPT;
     if (!MODELS.some(model => model.id === merged.model)) merged.model = DEFAULT_SETTINGS.model;
     if (merged.provider !== 'browser' && !PROVIDERS[merged.provider]) merged.provider = 'browser';
-    merged.remote = Object.fromEntries(Object.keys(PROVIDERS).map(id => [id, { ...DEFAULT_SETTINGS.remote[id], ...stored.remote?.[id] }]));
+    merged.remote = Object.fromEntries(Object.keys(PROVIDERS).map(id => {
+      const { noThinking, ...saved } = stored.remote?.[id] ?? {};
+      // The first version had an on/off noThinking switch for local servers instead of a level.
+      if (noThinking === false && !saved.thinking) saved.thinking = 'default';
+      const remote = { ...DEFAULT_SETTINGS.remote[id], ...saved };
+      if (!PROVIDERS[id].thinkingLevels.includes(remote.thinking)) remote.thinking = PROVIDERS[id].defaultThinking;
+      return [id, remote];
+    }));
     return merged;
   } catch (_) {
     return { ...DEFAULT_SETTINGS };
@@ -267,8 +274,8 @@ function remoteModel(id = settings.provider) {
 }
 
 function getRemoteClient() {
-  const { baseUrl, noThinking } = settings.remote[settings.provider];
-  const options = { baseUrl, noThinking, model: remoteModel(), apiKey: apiKeys[settings.provider] ?? '' };
+  const { baseUrl, thinking } = settings.remote[settings.provider];
+  const options = { baseUrl, thinking, model: remoteModel(), apiKey: apiKeys[settings.provider] ?? '' };
   const key = JSON.stringify([settings.provider, options]);
   if (key !== remoteClientKey) {
     remoteClient = createClient(settings.provider, options);
@@ -278,7 +285,9 @@ function getRemoteClient() {
 }
 
 function contextWindow() {
-  return isRemote() ? PROVIDERS[settings.provider].contextWindow : CONTEXT_WINDOW;
+  if (!isRemote()) return CONTEXT_WINDOW;
+  // Only a local server's context depends on how it was started; the cloud APIs keep their fixed figures.
+  return settings.provider === 'local' ? settings.remote.local.contextWindow : PROVIDERS[settings.provider].contextWindow;
 }
 
 function historyLimit() {
@@ -380,7 +389,8 @@ function readRemoteFields() {
     model: $('setting-remote-model').value.trim(),
     apiKey: $('setting-api-key').value.trim(),
     remember: $('setting-remember-key').checked,
-    noThinking: $('setting-no-thinking').checked,
+    thinking: $('setting-thinking').value,
+    contextWindow: Math.round(clampNumber($('setting-context').value, 2048, 262144, PROVIDERS[dialogProvider].contextWindow)),
     maxTokens: Math.round(clampNumber($('setting-remote-max-tokens').value, 256, 32000, PROVIDERS[dialogProvider].defaultMaxTokens))
   };
 }
@@ -420,8 +430,17 @@ function showProviderFields(id) {
   if (!remote) return;
   const values = draft[id];
   $('setting-base-url-row').hidden = id !== 'local';
-  $('setting-no-thinking-row').hidden = id !== 'local';
-  $('setting-no-thinking').checked = values.noThinking;
+  $('setting-context-row').hidden = id !== 'local';
+  $('setting-context').value = values.contextWindow;
+  $('setting-thinking').replaceChildren(...provider.thinkingLevels.map(level => {
+    const option = document.createElement('option');
+    option.value = level;
+    option.textContent = THINKING_LABELS[level];
+    return option;
+  }));
+  $('setting-thinking').value = values.thinking;
+  $('setting-thinking-note').textContent =
+    `考えるほど答えは良くなりやすい一方、時間${id === 'local' ? '' : 'と料金'}が増えます。考えた分も最大出力トークン数に数えるので、high では最大出力を増やしてください。${provider.thinkingNote}`;
   $('setting-base-url').value = values.baseUrl;
   $('setting-base-url').placeholder = provider.defaultBaseUrl ?? '';
   $('setting-api-key').value = values.apiKey;
@@ -519,8 +538,8 @@ function setupSettings() {
       ...settings,
       provider: $('setting-provider').value,
       remote: Object.fromEntries(Object.keys(PROVIDERS).map(id => {
-        const { baseUrl, model, maxTokens, noThinking } = draft[id];
-        return [id, { baseUrl, model, maxTokens, noThinking }];
+        const { baseUrl, model, maxTokens, thinking, contextWindow } = draft[id];
+        return [id, { baseUrl, model, maxTokens, thinking, contextWindow }];
       })),
       model: selectedModelId(),
       temperature: clampNumber($('setting-temperature').value, 0, 1.5, DEFAULT_SETTINGS.temperature),
@@ -846,17 +865,36 @@ async function complete({ messages, maxTokens, temperature, onText, useVisionMod
 }
 
 async function generate(messages, bubble, attempt) {
-  const { text, usage } = await complete({
-    messages,
-    maxTokens: outputLimit(),
-    // At a low temperature a retry tends to reproduce the same broken program, so loosen it a little each time.
-    temperature: Math.min(1, settings.temperature + attempt * 0.3),
-    grammar: settings.grammar && !isRemote(),
-    onText: sofar => {
-      bubble.textContent = visibleText(sofar) || '…';
-      scrollLog();
-    }
-  });
+  // A thinking model may stay silent for a long time, so show that it is still working.
+  const started = Date.now();
+  let answering = false;
+  const thinking = isRemote() && settings.remote[settings.provider].thinking !== 'none';
+  const timer = thinking ? setInterval(() => {
+    if (!answering) bubble.textContent = `考えています…（${Math.round((Date.now() - started) / 1000)}秒）`;
+  }, 1000) : null;
+  let result;
+  try {
+    result = await complete({
+      messages,
+      maxTokens: outputLimit(),
+      // At a low temperature a retry tends to reproduce the same broken program, so loosen it a little each time.
+      temperature: Math.min(1, settings.temperature + attempt * 0.3),
+      grammar: settings.grammar && !isRemote(),
+      onText: sofar => {
+        answering = true;
+        bubble.textContent = visibleText(sofar) || '…';
+        scrollLog();
+      }
+    });
+  } finally {
+    clearInterval(timer);
+    if (thinking && !answering) bubble.textContent = '（返事の本文がありませんでした）';
+  }
+  const { text, usage, truncated } = result;
+  // Retrying would hit the same limit, so stop and say which setting to change.
+  if (truncated && (text.match(/```/g)?.length ?? 0) < 2) {
+    throw new Error('考えている途中で最大出力トークン数に達し、プログラムまで届きませんでした。⚙設定で最大出力トークン数を増やすか、考える量を減らしてください。');
+  }
   if (usage) {
     lastUsage = usage;
     tokenScale = usage.input / estimateMessages(messages);
@@ -1079,7 +1117,7 @@ async function handleRequest(request) {
   fitHistory(request);
   const base = buildMessages(request);
   if (estimate(base) + outputLimit() > contextWindow()) {
-    addNote('依頼（と今のプログラム）が長すぎて、AIに渡せません。依頼を短くするか、「新しい会話」を押してください。', 'error');
+    addNote(`依頼（と今のプログラム）に最大出力トークン数（${formatNumber(outputLimit())}）を足すと文脈の長さ（${formatNumber(contextWindow())}）を超えるため、AIに渡せません。依頼を短くするか、⚙設定で最大出力トークン数を減らしてください${settings.provider === 'local' ? '（サーバー側で文脈を長くできるなら、設定の「文脈の長さ」も合わせて増やせます）' : ''}。`, 'error');
     generating = false;
     updateUi();
     return;
@@ -1155,7 +1193,7 @@ function submit() {
 function init() {
   runPenCheckTests({ findPenUpProblem });
   runSnapshotTests({ renderSnapshot });
-  runProviderTests({ toOpenAiMessages, toAnthropicContent, readEvents, apiRoot, describeError, ProviderError });
+  runProviderTests({ toOpenAiMessages, toAnthropicContent, readEvents, apiRoot, describeError, ProviderError, claudeThinking });
   setupSettings();
   loadButton.addEventListener('click', loadModel);
   $('chat-form').addEventListener('submit', event => {

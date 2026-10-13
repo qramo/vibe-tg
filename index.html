@@ -156,6 +156,10 @@
             <label for="setting-base-url">サーバーの URL</label>
             <input id="setting-base-url" type="text" inputmode="url" spellcheck="false" autocomplete="off" placeholder="http://localhost:11434/v1">
           </div>
+          <div id="setting-context-row" class="settings-row">
+            <label for="setting-context">文脈の長さ（トークン）</label>
+            <input id="setting-context" type="number" min="2048" max="262144" step="1">
+          </div>
           <label for="setting-api-key">API キー</label>
           <div class="settings-field">
             <input id="setting-api-key" type="password" spellcheck="false" autocomplete="off">
@@ -166,10 +170,8 @@
             <input id="setting-remote-model" type="text" list="setting-remote-models" spellcheck="false" autocomplete="off">
             <button type="button" id="setting-list-models" class="chat-button">一覧を取得</button>
           </div>
-          <div id="setting-no-thinking-row" class="settings-row">
-            <span>考える過程</span>
-            <label class="settings-check"><input id="setting-no-thinking" type="checkbox"> 省いてすぐ答えさせる（速くなります。考えるモデルに reasoning_effort: none を送ります）</label>
-          </div>
+          <label for="setting-thinking">考える量</label>
+          <select id="setting-thinking"></select>
           <label for="setting-remote-max-tokens">最大出力トークン数</label>
           <input id="setting-remote-max-tokens" type="number" min="256" max="32000" step="1">
           <span>接続テスト</span>
@@ -179,6 +181,7 @@
           </div>
         </div>
         <datalist id="setting-remote-models"></datalist>
+        <p id="setting-thinking-note" class="settings-note"></p>
         <p id="setting-remote-help" class="settings-note"></p>
         <p id="setting-key-note" class="settings-note">API キーは、保存しなければこのタブを閉じると消えます。保存すると、このブラウザーの同じサイト（qramo.github.io の他のページも含む）から読める場所に残るので、共用のパソコンでは保存しないでください。</p>
       </div>
